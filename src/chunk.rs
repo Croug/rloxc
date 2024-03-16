@@ -3,16 +3,16 @@ use std::fmt::{self, Debug, Formatter};
 
 
 #[repr(u8)]
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum OpCode {
     Constant(usize),
     Return,
 }
 
-type Value = f64;
+pub type Value = f64;
 
 pub struct Chunk {
-    code: Vec<OpCode>,
+    pub code: Vec<OpCode>,
     lines: Vec<usize>,
     constants: Vec<Value>,
 }
@@ -32,9 +32,18 @@ impl OpCode {
 impl Debug for Chunk {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         writeln!(f, "{txt:=^30}", txt = " BEGIN CHUNK ")?;
+        writeln!(f, "LINE SRCLN OP_CODE")?;
 
+        let mut last_line = usize::MAX;
         for (i, op) in self.code.iter().enumerate() {
-            writeln!(f, "{i:0>4}: {op}", i = i, op = op.to_string_resolved(&self))?;
+            let line = self.lines[i];
+            let line_text = if line == last_line {
+                "   ||".to_string()
+            } else {
+                format!("{line:0>5}")
+            };
+            last_line = line;
+            writeln!(f, "{i:0>4} {line} {op}", i = i, op = op.to_string_resolved(&self), line = line_text)?;
         }
 
         writeln!(f, "{txt:=^30}", txt = " END CHUNK ")
@@ -58,5 +67,9 @@ impl Chunk {
     pub fn set_constant(&mut self, value: Value) -> usize {
         self.constants.push(value);
         self.constants.len() - 1
+    }
+
+    pub fn get_constant(&mut self, index: usize) -> Value {
+        self.constants[index]
     }
 }
