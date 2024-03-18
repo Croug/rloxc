@@ -1,32 +1,54 @@
 use std::fmt::{self, Debug, Formatter};
 
-
+use crate::value::Value;
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone)]
 pub enum OpCode {
     Constant(usize),
+    Nil,
+    True,
+    False,
+    Equal,
+    Greater,
+    Less,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Not,
+    Negate,
     Return,
-}
-
-pub type Value = f64;
-
-pub struct Chunk {
-    pub code: Vec<OpCode>,
-    lines: Vec<usize>,
-    constants: Vec<Value>,
 }
 
 impl OpCode {
     pub fn to_string_resolved(&self, chunk: &Chunk) -> String {
         match self {
             OpCode::Constant(index) => {
-                let value = chunk.constants[*index];
+                let value = &chunk.constants[*index];
                 format!("OP_CONSTANT({}:{})", index, value)
             }
+            OpCode::Nil => "OP_NIL".to_string(),
+            OpCode::True => "OP_TRUE".to_string(),
+            OpCode::False => "OP_FALSE".to_string(),
+            OpCode::Equal => "OP_EQUAL".to_string(),
+            OpCode::Greater => "OP_GREATER".to_string(),
+            OpCode::Less => "OP_LESS".to_string(),
+            OpCode::Add => "OP_ADD".to_string(),
+            OpCode::Subtract => "OP_SUBTRACT".to_string(),
+            OpCode::Multiply => "OP_MULTIPLY".to_string(),
+            OpCode::Divide => "OP_DIVIDE".to_string(),
+            OpCode::Not => "OP_NOT".to_string(),
+            OpCode::Negate => "OP_NEGATE".to_string(),
             OpCode::Return => "OP_RETURN".to_string(),
         }
     }
+}
+
+pub struct Chunk {
+    pub code: Vec<OpCode>,
+    lines: Vec<usize>,
+    constants: Vec<Value>,
 }
 
 impl Debug for Chunk {
@@ -57,6 +79,10 @@ impl Chunk {
             lines: Vec::new(),
             constants: Vec::new(),
         }
+    }
+
+    pub fn line(&self, offset: usize) -> usize {
+        self.lines[offset]
     }
 
     pub fn write_chunk(&mut self, byte: OpCode, line: usize) {

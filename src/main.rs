@@ -1,14 +1,49 @@
-use chunk::Chunk;
-
-use crate::chunk::OpCode;
+use clap::Parser;
+use std::{io::{Read, Write}, path::PathBuf};
 
 mod chunk;
 mod vm;
+mod compiler;
+mod scanner;
+mod token;
+mod value;
+
+#[derive(Parser)]
+struct Cli {
+    file: Option<PathBuf>,
+}
+
+fn repl() {
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+    let mut vm = vm::VM::new();
+    let mut line = String::new();
+    loop {
+        print!(">>> ");
+        stdout.flush().unwrap();
+        line.clear();
+        stdin.read_line(&mut line).unwrap();
+        let result = vm.interpret_source(&line);
+        println!("{:?}", result)
+    }
+}
+
+fn run_file(file: PathBuf) {
+    let mut file = std::fs::File::open(file).unwrap();
+    let mut source = String::new();
+    file.read_to_string(&mut source).unwrap();
+    let mut vm = vm::VM::new();
+    match vm.interpret_source(&source) {
+        Ok(_) => (),
+        Err(e) => println!("Error: {:?}", e),
+    }
+}
 
 fn main() {
-    let mut chunk = Chunk::new();
-    let constant = chunk.set_constant(1.2);
-    chunk.write_chunk(OpCode::Constant(constant), 0);
-    chunk.write_chunk(OpCode::Return, 0);
-    _ = vm::VM::new().interpret(chunk);
+    let args = Cli::parse();
+    if let Some(file) = args.file {
+        run_file(file);
+    } else {
+        repl();
+    }
 }
