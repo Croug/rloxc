@@ -67,7 +67,7 @@ const RULES: [ParseRule; 40] = [
     /* Less         */ ParseRule::new(None, parse_handler!(binary), Precedence::Comparison),
     /* LessEqual    */ ParseRule::new(None, parse_handler!(binary), Precedence::Comparison),
     /* Identifier   */ ParseRule::new(None, None, Precedence::None),
-    /* String       */ ParseRule::new(None, None, Precedence::None),
+    /* String       */ ParseRule::new(parse_handler!(string), None, Precedence::None),
     /* Number       */ ParseRule::new(parse_handler!(number), None, Precedence::None),
     /* And          */ ParseRule::new(None, None, Precedence::None),
     /* Class        */ ParseRule::new(None, None, Precedence::None),
@@ -140,6 +140,11 @@ impl<'a> Compiler<'a> {
         } else {
             Ok(self.current_chunk.take().unwrap())
         }
+    }
+
+    fn string(&mut self) {
+        let string = self.previous.as_ref().unwrap().lexeme();
+        self.add_constant(Value::String(string[1..string.len() - 1].to_string()));
     }
 
     fn literal(&mut self) {

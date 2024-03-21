@@ -1,4 +1,4 @@
-use std::result;
+use std::{mem::discriminant, result};
 
 use crate::{chunk::{Chunk, OpCode}, compiler, value::Value};
 
@@ -106,7 +106,20 @@ impl VM {
                     println!("{:?}", self.pop());
                     return Ok(());
                 }
-                OpCode::Add => binary_op!(self, Number, +),
+                OpCode::Add => {
+                    let b = self.pop().unwrap();
+                    let a = self.pop().unwrap();
+
+                    match (a, b) {
+                        (Value::String(a), b) => self.push(Value::String(a + &b.to_string())),
+                        (a, Value::String(b)) => self.push(Value::String(a.to_string() + &b)),
+                        (Value::Number(a), Value::Number(b)) => self.push(Value::Number(a + b)),
+                        (a, b) => {
+                            runtime_error!(self, "Add operation not valid on types '{}' and '{}'", a.type_name(), b.type_name());
+                            return Err(InterpretError::RuntimeError);
+                        }
+                    }
+                },
                 OpCode::Subtract => binary_op!(self, Number, -),
                 OpCode::Multiply => binary_op!(self, Number, *),
                 OpCode::Divide => binary_op!(self, Number, /),
