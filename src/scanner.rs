@@ -1,7 +1,7 @@
 use crate::token::{Token, TokenType};
 
 use fst::{Map, MapBuilder};
-use num_traits::FromPrimitive;
+use num_traits::{AsPrimitive, FromPrimitive};
 
 pub struct Scanner<'a> {
     source: &'a str,
@@ -87,7 +87,7 @@ impl<'a> Scanner<'a> {
             '"' => self.string(),
             c if c.is_numeric() => self.number(),
             c if c.is_alphabetic() => self.identifier(),
-            _ => Token::error(self.line, "Unexpected character.".to_owned())
+            _ => Token::error(self.line, format!("Unexpected character '{c}'").to_owned())
         }
     }
 
@@ -177,7 +177,8 @@ impl<'a> Scanner<'a> {
     }
 
     fn make_token(&mut self, token_type: TokenType) -> Token {
-        Token::new(token_type, self.source[self.start..self.current].to_owned(), self.line)
+        let lexeme = self.source.chars().skip(self.start).take(self.current - self.start).collect();
+        Token::new(token_type, lexeme, self.line)
     }
 
     fn more_tokens(&self) -> bool {
