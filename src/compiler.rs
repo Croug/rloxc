@@ -20,7 +20,7 @@ pub enum Precedence {
     Primary,
 }
 
-type ParseFn = for<'a> fn(&'a mut Compiler<'_>);
+type ParseFn = for<'a> fn(&'a mut Compiler<'_>, bool);
 
 struct ParseRule {
     prefix: Option<ParseFn>,
@@ -44,7 +44,7 @@ impl ParseRule {
 
 macro_rules! parse_handler {
     ($fun:ident) => {
-        Some(|compiler: &mut Compiler<'_>| compiler.$fun())
+        Some(|compiler: &mut Compiler<'_>, can_assign: bool| compiler.$fun(can_assign))
     }
 }
 
@@ -68,7 +68,7 @@ const RULES: [ParseRule; 40] = [
     /* GreaterEqual */ ParseRule::new(None, parse_handler!(binary), Precedence::Comparison),
     /* Less         */ ParseRule::new(None, parse_handler!(binary), Precedence::Comparison),
     /* LessEqual    */ ParseRule::new(None, parse_handler!(binary), Precedence::Comparison),
-    /* Identifier   */ ParseRule::new(None, None, Precedence::None),
+    /* Identifier   */ ParseRule::new(parse_handler!(variable), None, Precedence::None),
     /* String       */ ParseRule::new(parse_handler!(string), None, Precedence::None),
     /* Number       */ ParseRule::new(parse_handler!(number), None, Precedence::None),
     /* And          */ ParseRule::new(None, None, Precedence::None),
@@ -91,7 +91,14 @@ const RULES: [ParseRule; 40] = [
     /* EOF          */ ParseRule::new(None, None, Precedence::None),
 ];
 
+struct Local {
+    name: Token,
+    depth: usize,
+}
+
 pub struct Compiler<'a> {
+    locals: Vec<Local>,
+    scope_depth: usize,
     scanner: Scanner<'a>,
     current: Option<Token>,
     previous: Option<Token>,
@@ -105,6 +112,8 @@ impl<'a> Compiler<'a> {
         let scanner = Scanner::new(source);
 
         Self {
+            locals: Vec::new(),
+            scope_depth: 0,
             scanner,
             current: None,
             previous: None,
@@ -147,12 +156,34 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn string(&mut self) {
+    fn string(&mut self, _: bool) {
         let string = self.previous.as_ref().unwrap().lexeme();
         self.add_constant(Value::String(string[1..string.len() - 1].to_string()));
     }
 
-    fn literal(&mut self) {
+    fn named_variable(&mut self, name: Token, can_assign: bool) {
+        let mut arg = self.resolve_local(&name);
+        let (set_op, get_op) = if arg < usize::MAX {
+            (OpCode::SetLocal(arg), OpCode::GetLocal(arg))
+        } else {
+            arg = self.current_chunk.as_mut().unwrap().set_constant(Value::String(name.lexeme().clone()));
+            (OpCode::SetGlobal(arg), OpCode::GetGlobal(arg))
+        };
+        
+        if can_assign && self.match_token(TokenType::Equal) {
+            self.expression();
+            self.add_instruction(set_op);
+        } else {
+            self.add_instruction(get_op);
+        }
+    }
+
+    fn variable(&mut self, can_assign: bool) {
+        let name = self.previous.as_ref().unwrap().clone();
+        self.named_variable(name, can_assign);
+    }
+
+    fn literal(&mut self, _: bool) {
         match self.previous.as_ref().unwrap().token_type() {
             TokenType::False => self.add_instruction(OpCode::False),
             TokenType::True => self.add_instruction(OpCode::True),
@@ -161,7 +192,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn binary(&mut self) {
+    fn binary(&mut self, _: bool) {
         let operator = self.previous.as_ref().unwrap().token_type();
         let rule = ParseRule::get(operator);
 
@@ -192,7 +223,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn unary(&mut self) {
+    fn unary(&mut self, _: bool) {
         let operator_type = self.previous.as_ref().unwrap().token_type();
 
         self.parse_precedence(Precedence::Unary);
@@ -204,18 +235,26 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn grouping(&mut self) {
+    fn grouping(&mut self, _: bool) {
         self.expression();
         self.consume(TokenType::RightParen, "Expect ')' after expression.");
     }
 
-    fn number(&mut self) {
+    fn number(&mut self, _: bool) {
         let number = self.previous.as_ref().unwrap().lexeme().parse().unwrap();
         self.add_constant(Value::Number(number));
     }
 
     fn expression(&mut self) {
         self.parse_precedence(Precedence::Assignment);
+    }
+
+    fn block(&mut self) {
+        while !self.check(TokenType::RightBrace) && !self.check(TokenType::EOF) {
+            self.declaration();
+        }
+
+        self.consume(TokenType::RightBrace, "Expect '}' after block.");
     }
 
     fn print_statement(&mut self) {
@@ -233,13 +272,34 @@ impl<'a> Compiler<'a> {
     fn statement(&mut self) {
         if self.match_token(TokenType::Print) {
             self.print_statement();
+        } else if self.match_token(TokenType::LeftBrace) {
+            self.begin_scope();
+            self.block();
+            self.end_scope();
         } else {
             self.expression_statement();
         }
     }
 
+    fn var_declaration(&mut self) {
+        let global = self.parse_variable("Expect variable name.");
+
+        if self.match_token(TokenType::Equal) {
+            self.expression();
+        } else {
+            self.add_instruction(OpCode::Nil);
+        }
+        self.consume(TokenType::Semicolon, "Expect ';' after variable declaration.");
+
+        self.define_variable(global);
+    }
+
     fn declaration(&mut self) {
-        self.statement();
+        if self.match_token(TokenType::Var) {
+            self.var_declaration();
+        } else {
+            self.statement();
+        }
 
         if self.panic_mode {
             self.synchronize();
@@ -275,14 +335,44 @@ impl<'a> Compiler<'a> {
             }
         };
 
-        prefix_rule(self);
+        let can_assign = precedence as usize <= Precedence::Assignment as usize;
+        prefix_rule(self, can_assign);
 
         while precedence as usize <= ParseRule::get(self.current.as_ref().unwrap().token_type()).precedence as usize {
             self.advance();
             if let Some(infix_rule) = ParseRule::get(self.previous.as_ref().unwrap().token_type()).infix {
-                infix_rule(self);
+                infix_rule(self, can_assign);
+            }
+
+            if can_assign && self.match_token(TokenType::Equal) {
+                self.error("Invalid assignment target.");
             }
         }
+    }
+
+    fn parse_variable(&mut self, error_message: &str) -> usize {
+        self.consume(TokenType::Identifier, error_message);
+
+        self.declare_variable();
+
+        if self.scope_depth > 0 {
+            0
+        } else {
+            self.current_chunk.as_mut().unwrap().set_constant(Value::String(self.previous.as_ref().unwrap().lexeme().clone()))
+        }
+    }
+
+    fn mark_initialized(&mut self) {
+        self.locals.last_mut().unwrap().depth = self.scope_depth;
+    }
+
+    fn define_variable(&mut self, global: usize) {
+        if self.scope_depth > 0 {
+            self.mark_initialized();
+            return;
+        }
+
+        self.add_instruction(OpCode::DefineGlobal(global));
     }
 
     fn end_compiler(&mut self) {
@@ -294,6 +384,62 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
+    }
+
+    fn resolve_local(&mut self, name: &Token) -> usize {
+        for (i, local) in self.locals.iter().enumerate().rev() {
+            if name.lexeme() == local.name.lexeme() {
+                if local.depth == usize::MAX {
+                    self.error("Cannot read local variable in its own initializer.");
+                }
+                return i;
+            }
+        }
+
+        usize::MAX
+    }
+
+    fn begin_scope(&mut self) {
+        self.scope_depth += 1;
+    }
+
+    fn end_scope(&mut self) {
+        self.scope_depth -= 1;
+
+        while self.locals.len() > 0 && self.locals.last().unwrap().depth > self.scope_depth {
+            self.add_instruction(OpCode::Pop);
+            self.locals.pop();
+        }
+    }
+
+    fn add_local(&mut self, name: Token) {
+        self.locals.push(Local {
+            name,
+            depth: usize::MAX,
+        })
+    }
+
+    fn declare_variable(&mut self) {
+        if self.scope_depth == 0 {
+            return;
+        }
+
+        let name = self.previous.as_ref().unwrap().clone();
+        let mut err = false;
+        for local in self.locals.iter().rev() {
+            if local.depth != usize::MAX && local.depth < self.scope_depth {
+                break;
+            }
+
+            if name.lexeme() == local.name.lexeme() {
+                err = true;
+                break;
+            }
+        }
+        if err {
+            self.error("Variable with this name already declared in this scope.");
+        }
+        self.add_local(name);
     }
 
     fn advance(&mut self) {

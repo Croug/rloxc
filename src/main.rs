@@ -24,7 +24,9 @@ fn repl() {
         line.clear();
         stdin.read_line(&mut line).unwrap();
         let result = vm.interpret_source(&line);
-        println!("{:?}", result)
+        if let Err(e) = result {
+            println!("Error: {:?}", e);
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-use std::{mem::discriminant, result};
+use std::{collections::HashMap, result};
 
 use crate::{chunk::{Chunk, OpCode}, compiler, value::Value};
 
@@ -8,7 +8,7 @@ pub enum InterpretError {
     RuntimeError,
 }
 
-pub(crate) type Result<T> = std::result::Result<T, InterpretError>;
+pub(crate) type Result<T> = result::Result<T, InterpretError>;
 
 macro_rules! runtime_error {
     ($vm:ident, $( $arg:tt )*) => {
@@ -37,6 +37,7 @@ pub struct VM {
     chunk: Option<Chunk>,
     ip: usize,
     stack: Vec<Value>,
+    globals: HashMap<String, Value>,
 }
 
 impl VM {
@@ -45,6 +46,7 @@ impl VM {
             chunk: None,
             ip: 0,
             stack: Vec::new(),
+            globals: HashMap::new(),
         }
     }
 
@@ -79,8 +81,8 @@ impl VM {
         self.stack.pop()
     }
     
-    fn peek(&mut self, distance: usize) -> &Value {
-        &self.stack[self.stack.len() - 1 - distance]
+    fn peek(&mut self) -> Option<&Value> {
+        self.stack.last()
     }
     
     fn _error(&mut self) {
@@ -141,6 +143,54 @@ impl VM {
                 OpCode::True => self.push(Value::Bool(true)),
                 OpCode::False => self.push(Value::Bool(false)),
                 OpCode::Pop => { self.pop(); }
+                OpCode::GetLocal(index) => {
+                    let value = self.stack[index].clone();
+                    self.push(value);
+                }
+                OpCode::SetLocal(index) => {
+                    let value = self.peek().unwrap().clone();
+                    self.stack[index] = value;
+                }
+                OpCode::GetGlobal(index) => {
+                    let name = self.get_chunk()?.get_constant(index);
+                    if let Value::String(name) = name {
+                        if let Some(value) = self.globals.get(&name) {
+                            self.push(value.clone());
+                        } else {
+                            runtime_error!(self, "Undefined variable '{}'", name);
+                            return Err(InterpretError::RuntimeError);
+                        }
+                    } else {
+                        runtime_error!(self, "Global name must be a string.");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::SetGlobal(index) => {
+                    let name = self.get_chunk()?.get_constant(index);
+                    if let Value::String(name) = name {
+                        if self.globals.contains_key(&name) {
+                            let value = self.peek().unwrap().clone();
+                            self.globals.insert(name, value);
+                        } else {
+                            runtime_error!(self, "Undefined variable '{}'", name);
+                            return Err(InterpretError::RuntimeError);
+                        }
+                    } else {
+                        runtime_error!(self, "Global name must be a string.");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                
+                }
+                OpCode::DefineGlobal(index) => {
+                    let name = self.get_chunk()?.get_constant(index);
+                    if let Value::String(name) = name {
+                        let value = self.pop().unwrap();
+                        self.globals.insert(name, value);
+                    } else {
+                        runtime_error!(self, "Global name must be a string.");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
                 OpCode::Equal => {
                     let b = self.pop().unwrap();
                     let a = self.pop().unwrap();

@@ -5,11 +5,16 @@ use crate::value::Value;
 #[repr(u8)]
 #[derive(Debug, Copy, Clone)]
 pub enum OpCode {
-    Constant(usize),
+    Constant(usize) = 0,
     Nil,
     True,
     False,
     Pop,
+    GetLocal(usize),
+    SetLocal(usize),
+    GetGlobal(usize),
+    SetGlobal(usize),
+    DefineGlobal(usize),
     Equal,
     Greater,
     Less,
@@ -34,6 +39,20 @@ impl OpCode {
             OpCode::True => "OP_TRUE".to_string(),
             OpCode::False => "OP_FALSE".to_string(),
             OpCode::Pop => "OP_POP".to_string(),
+            OpCode::GetLocal(index) => format!("OP_GET_LOCAL({})", index),
+            OpCode::SetLocal(index) => format!("OP_SET_LOCAL({})", index),
+            OpCode::GetGlobal(index) => {
+                let value = &chunk.constants[*index];
+                format!("OP_GET_GLOBAL({}:{})", index, value)
+            }
+            OpCode::SetGlobal(index) => {
+                let value = &chunk.constants[*index];
+                format!("OP_SET_GLOBAL({}:{})", index, value)
+            }
+            OpCode::DefineGlobal(index) => {
+                let value = &chunk.constants[*index];
+                format!("OP_DEFINE_GLOBAL({}:{})", index, value)
+            }
             OpCode::Equal => "OP_EQUAL".to_string(),
             OpCode::Greater => "OP_GREATER".to_string(),
             OpCode::Less => "OP_LESS".to_string(),
