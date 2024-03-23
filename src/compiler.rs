@@ -81,7 +81,7 @@ const RULES: [ParseRule; 40] = [
     /* Identifier   */ ParseRule::new(parse_handler!(variable), None, Precedence::None),
     /* String       */ ParseRule::new(parse_handler!(string), None, Precedence::None),
     /* Number       */ ParseRule::new(parse_handler!(number), None, Precedence::None),
-    /* And          */ ParseRule::new(None, None, Precedence::None),
+    /* And          */ ParseRule::new(None, parse_handler!(and), Precedence::None),
     /* Class        */ ParseRule::new(None, None, Precedence::None),
     /* Else         */ ParseRule::new(None, None, Precedence::None),
     /* False        */ ParseRule::new(parse_handler!(literal), None, Precedence::None),
@@ -89,7 +89,7 @@ const RULES: [ParseRule; 40] = [
     /* Fun          */ ParseRule::new(None, None, Precedence::None),
     /* If           */ ParseRule::new(None, None, Precedence::None),
     /* Nil          */ ParseRule::new(parse_handler!(literal), None, Precedence::None),
-    /* Or           */ ParseRule::new(None, None, Precedence::None),
+    /* Or           */ ParseRule::new(None, parse_handler!(or), Precedence::None),
     /* Print        */ ParseRule::new(None, None, Precedence::None),
     /* Return       */ ParseRule::new(None, None, Precedence::None),
     /* Super        */ ParseRule::new(None, None, Precedence::None),
@@ -142,6 +142,11 @@ impl<'a> Compiler<'a> {
         self.add_instruction(instruction);
 
         self.current_chunk.as_ref().unwrap().code.len() - 1
+    }
+
+    fn add_loop(&mut self, loop_start: usize) {
+        let offset = self.current_chunk.as_ref().unwrap().code.len() - loop_start + 1;
+        self.add_instruction(OpCode::Loop(offset))
     }
 
     fn patch_instruction(&mut self, address: usize, instruction: OpCode) {
@@ -283,10 +288,70 @@ impl<'a> Compiler<'a> {
         self.add_instruction(OpCode::Print);
     }
 
+    fn while_statement(&mut self) {
+        let loop_start = self.current_chunk.as_ref().unwrap().code.len();
+        self.consume(TokenType::LeftParen, "Expect '(' after 'while'.");
+        self.expression();
+        self.consume(TokenType::RightParen, "Expect ')' after condition.");
+
+        let exit_jump = self.add_jump(OpCode::Nil);
+        self.add_instruction(OpCode::Pop);
+        self.statement();
+        self.add_loop(loop_start);
+
+        patch_jump!(self, exit_jump, JumpIfFalse);
+        self.add_instruction(OpCode::Pop);
+    }
+
     fn expression_statement(&mut self) {
         self.expression();
         self.consume(TokenType::Semicolon, "Expect ';' after expression.");
         self.add_instruction(OpCode::Pop);
+    }
+
+    fn for_statement(&mut self) {
+        self.begin_scope();
+        self.consume(TokenType::LeftParen, "Expect '(' after 'for'.");
+        if self.match_token(TokenType::Semicolon) {}
+        else if self.match_token(TokenType::Var) {
+            self.var_declaration();
+        } else {
+            self.expression_statement();
+        }
+
+        let mut loop_start = self.current_chunk.as_ref().unwrap().code.len();
+        let exit_jump = if !self.match_token(TokenType::Semicolon) {
+            self.expression();
+            self.consume(TokenType::Semicolon, "Expect ';' after loop condition.");
+            let jump = self.add_jump(OpCode::Nil);
+            self.add_instruction(OpCode::Pop);
+
+            Some(jump)
+        } else {
+            None
+        };
+
+        if !self.match_token(TokenType::RightParen) {
+            let body_jump = self.add_jump(OpCode::Nil);
+            let increment_start = self.current_chunk.as_ref().unwrap().code.len();
+            self.expression();
+            self.add_instruction(OpCode::Pop);
+            self.consume(TokenType::RightParen, "Expect ')' after for clauses.");
+
+            self.add_loop(loop_start);
+            loop_start = increment_start;
+            patch_jump!(self, body_jump, Jump);
+        }
+
+        self.statement();
+        self.add_loop(loop_start);
+
+        if let Some(exit_jump) = exit_jump {
+            patch_jump!(self, exit_jump, JumpIfFalse);
+            self.add_instruction(OpCode::Pop);
+        }
+
+        self.end_scope();
     }
 
     fn if_statement(&mut self) {
@@ -310,8 +375,12 @@ impl<'a> Compiler<'a> {
     fn statement(&mut self) {
         if self.match_token(TokenType::Print) {
             self.print_statement();
+        } else if self.match_token(TokenType::For) {
+            self.for_statement();
         } else if self.match_token(TokenType::If) {
             self.if_statement();
+        } else if self.match_token(TokenType::While) {
+            self.while_statement();
         } else if self.match_token(TokenType::LeftBrace) {
             self.begin_scope();
             self.block();
@@ -413,6 +482,26 @@ impl<'a> Compiler<'a> {
         }
 
         self.add_instruction(OpCode::DefineGlobal(global));
+    }
+
+    fn and(&mut self, _: bool) {
+        let end_jump = self.add_jump(OpCode::Nil);
+
+        self.add_instruction(OpCode::Pop);
+        self.parse_precedence(Precedence::And);
+
+        patch_jump!(self, end_jump, JumpIfFalse);
+    }
+
+    fn or(&mut self, _: bool) {
+        let else_jump = self.add_jump(OpCode::Nil);
+        let end_jump = self.add_jump(OpCode::Nil);
+
+        patch_jump!(self, else_jump, JumpIfFalse);
+        self.add_instruction(OpCode::Pop);
+
+        self.parse_precedence(Precedence::Or);
+        patch_jump!(self, end_jump, JumpIfFalse);
     }
 
     fn end_compiler(&mut self) {

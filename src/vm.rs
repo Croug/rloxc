@@ -201,15 +201,14 @@ impl VM {
                 OpCode::Print => {
                     println!("{}", self.pop().unwrap());
                 }
-                OpCode::Jump(offset) => {
-                    self.ip += offset;
-                }
+                OpCode::Jump(offset) => self.ip += offset,
                 OpCode::JumpIfFalse(offset) => {
                     let value = self.peek().unwrap();
                     if !value.truthy() {
                         self.ip += offset;
                     }
                 }
+                OpCode::Loop(offset) => self.ip -= offset,
                 OpCode::Return => {
                     return Ok(());
                 }

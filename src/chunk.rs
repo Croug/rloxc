@@ -27,6 +27,7 @@ pub enum OpCode {
     Print,
     Jump(usize),
     JumpIfFalse(usize),
+    Loop(usize),
     Return,
 }
 
@@ -67,6 +68,7 @@ impl OpCode {
             OpCode::Print => "OP_PRINT".to_string(),
             OpCode::Jump(offset) => format!("OP_JUMP({})", offset),
             OpCode::JumpIfFalse(offset) => format!("OP_JUMP_IF_FALSE({})", offset),
+            OpCode::Loop(offset) => format!("OP_LOOP({})", offset),
             OpCode::Return => "OP_RETURN".to_string(),
         }
     }
