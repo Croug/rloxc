@@ -102,10 +102,6 @@ impl VM {
             }
 
             match instruction {
-                OpCode::Return => {
-                    println!("{:?}", self.pop());
-                    return Ok(());
-                }
                 OpCode::Add => {
                     let b = self.pop().unwrap();
                     let a = self.pop().unwrap();
@@ -144,6 +140,7 @@ impl VM {
                 OpCode::Nil => self.push(Value::Nil),
                 OpCode::True => self.push(Value::Bool(true)),
                 OpCode::False => self.push(Value::Bool(false)),
+                OpCode::Pop => { self.pop(); }
                 OpCode::Equal => {
                     let b = self.pop().unwrap();
                     let a = self.pop().unwrap();
@@ -151,6 +148,12 @@ impl VM {
                 }
                 OpCode::Greater => binary_op!(self, Bool, >),
                 OpCode::Less => binary_op!(self, Bool, <),
+                OpCode::Print => {
+                    println!("{}", self.pop().unwrap());
+                }
+                OpCode::Return => {
+                    return Ok(());
+                }
             }
         }
     }

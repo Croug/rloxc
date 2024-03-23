@@ -1,3 +1,5 @@
+use std::mem::discriminant;
+
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
@@ -131,8 +133,11 @@ impl<'a> Compiler<'a> {
         self.current_chunk = Some(Chunk::new());
 
         self.advance();
-        self.expression();
-        self.consume(TokenType::EOF, "Expect end of expression.");
+        
+        while !self.match_token(TokenType::EOF) {
+            self.declaration();
+        }
+
         self.end_compiler();
 
         if self.had_error {
@@ -209,6 +214,57 @@ impl<'a> Compiler<'a> {
         self.add_constant(Value::Number(number));
     }
 
+    fn expression(&mut self) {
+        self.parse_precedence(Precedence::Assignment);
+    }
+
+    fn print_statement(&mut self) {
+        self.expression();
+        self.consume(TokenType::Semicolon, "Expect ';' after value.");
+        self.add_instruction(OpCode::Print);
+    }
+
+    fn expression_statement(&mut self) {
+        self.expression();
+        self.consume(TokenType::Semicolon, "Expect ';' after expression.");
+        self.add_instruction(OpCode::Pop);
+    }
+
+    fn statement(&mut self) {
+        if self.match_token(TokenType::Print) {
+            self.print_statement();
+        } else {
+            self.expression_statement();
+        }
+    }
+
+    fn declaration(&mut self) {
+        self.statement();
+
+        if self.panic_mode {
+            self.synchronize();
+        }
+    }
+
+    fn synchronize(&mut self) {
+        self.panic_mode = false;
+
+        while !self.check(TokenType::EOF) {
+            match self.previous.as_ref().unwrap().token_type() {
+                TokenType::Class | 
+                TokenType::Fun | 
+                TokenType::Var | 
+                TokenType::For | 
+                TokenType::If | 
+                TokenType::While | 
+                TokenType::Print | 
+                TokenType::Return => return,
+                _ => (),
+            }
+            self.advance();
+        }
+    }
+
     fn parse_precedence(&mut self, precedence: Precedence) {
         self.advance();
         let prefix_rule = match ParseRule::get(self.previous.as_ref().unwrap().token_type()).prefix {
@@ -227,10 +283,6 @@ impl<'a> Compiler<'a> {
                 infix_rule(self);
             }
         }
-    }
-
-    fn expression(&mut self) {
-        self.parse_precedence(Precedence::Assignment);
     }
 
     fn end_compiler(&mut self) {
@@ -265,6 +317,19 @@ impl<'a> Compiler<'a> {
         }
 
         self.error_at_current(message);
+    }
+
+    fn match_token(&mut self, token_type: TokenType) -> bool {
+        if !self.check(token_type) {
+            return false;
+        }
+
+        self.advance();
+        true
+    }
+
+    fn check(&self, token_type: TokenType) -> bool {
+        discriminant(&self.current.as_ref().unwrap().token_type()) == discriminant(&token_type)
     }
 
     fn error_at_current(&mut self, message: &str) {

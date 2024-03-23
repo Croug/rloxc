@@ -1,7 +1,7 @@
 use crate::token::{Token, TokenType};
 
 use fst::{Map, MapBuilder};
-use num_traits::{AsPrimitive, FromPrimitive};
+use num_traits::FromPrimitive;
 
 pub struct Scanner<'a> {
     source: &'a str,

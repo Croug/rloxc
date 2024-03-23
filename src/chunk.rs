@@ -9,6 +9,7 @@ pub enum OpCode {
     Nil,
     True,
     False,
+    Pop,
     Equal,
     Greater,
     Less,
@@ -18,6 +19,7 @@ pub enum OpCode {
     Divide,
     Not,
     Negate,
+    Print,
     Return,
 }
 
@@ -31,6 +33,7 @@ impl OpCode {
             OpCode::Nil => "OP_NIL".to_string(),
             OpCode::True => "OP_TRUE".to_string(),
             OpCode::False => "OP_FALSE".to_string(),
+            OpCode::Pop => "OP_POP".to_string(),
             OpCode::Equal => "OP_EQUAL".to_string(),
             OpCode::Greater => "OP_GREATER".to_string(),
             OpCode::Less => "OP_LESS".to_string(),
@@ -40,6 +43,7 @@ impl OpCode {
             OpCode::Divide => "OP_DIVIDE".to_string(),
             OpCode::Not => "OP_NOT".to_string(),
             OpCode::Negate => "OP_NEGATE".to_string(),
+            OpCode::Print => "OP_PRINT".to_string(),
             OpCode::Return => "OP_RETURN".to_string(),
         }
     }
