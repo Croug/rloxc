@@ -25,6 +25,8 @@ pub enum OpCode {
     Not,
     Negate,
     Print,
+    Jump(usize),
+    JumpIfFalse(usize),
     Return,
 }
 
@@ -63,6 +65,8 @@ impl OpCode {
             OpCode::Not => "OP_NOT".to_string(),
             OpCode::Negate => "OP_NEGATE".to_string(),
             OpCode::Print => "OP_PRINT".to_string(),
+            OpCode::Jump(offset) => format!("OP_JUMP({})", offset),
+            OpCode::JumpIfFalse(offset) => format!("OP_JUMP_IF_FALSE({})", offset),
             OpCode::Return => "OP_RETURN".to_string(),
         }
     }

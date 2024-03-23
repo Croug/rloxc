@@ -48,6 +48,16 @@ macro_rules! parse_handler {
     }
 }
 
+macro_rules! patch_jump {
+    ($compiler:ident, $offset:expr, $discriminant:ident) => {
+        {
+            let jump = $compiler.current_chunk.as_ref().unwrap().code.len() - 1;
+            $compiler.patch_instruction($offset, OpCode::$discriminant(jump - $offset));
+        }
+    }
+    
+}
+
 const RULES: [ParseRule; 40] = [
     /* LeftParen    */ ParseRule::new(parse_handler!(grouping), None, Precedence::None),
     /* RightParen   */ ParseRule::new(None, None, Precedence::None),
@@ -124,9 +134,19 @@ impl<'a> Compiler<'a> {
     }
 
     fn add_instruction(&mut self, instruction: OpCode) {
-        if let Some(chunk) = self.current_chunk.as_mut() {
-            chunk.write_chunk(instruction, self.previous.as_ref().unwrap().line());
-        }
+        let chunk = self.current_chunk.as_mut().unwrap();
+        chunk.write_chunk(instruction, self.previous.as_ref().unwrap().line());
+    }
+
+    fn add_jump(&mut self, instruction: OpCode) -> usize {
+        self.add_instruction(instruction);
+
+        self.current_chunk.as_ref().unwrap().code.len() - 1
+    }
+
+    fn patch_instruction(&mut self, address: usize, instruction: OpCode) {
+        let chunk = self.current_chunk.as_mut().unwrap();
+        chunk.code[address] = instruction;
     }
 
     fn add_return(&mut self) {
@@ -269,9 +289,29 @@ impl<'a> Compiler<'a> {
         self.add_instruction(OpCode::Pop);
     }
 
+    fn if_statement(&mut self) {
+        self.consume(TokenType::LeftParen, "Expect '(' after 'if'.");
+        self.expression();
+        self.consume(TokenType::RightParen, "Expect ')' after condition.");
+
+        let then_jump = self.add_jump(OpCode::Nil);
+        self.add_instruction(OpCode::Pop);
+        self.statement();
+        let else_jump = self.add_jump(OpCode::Nil);
+        patch_jump!(self, then_jump, JumpIfFalse);
+        self.add_instruction(OpCode::Pop);
+
+        if self.match_token(TokenType::Else) {
+            self.statement();
+        }
+        patch_jump!(self, else_jump, Jump);
+    }
+
     fn statement(&mut self) {
         if self.match_token(TokenType::Print) {
             self.print_statement();
+        } else if self.match_token(TokenType::If) {
+            self.if_statement();
         } else if self.match_token(TokenType::LeftBrace) {
             self.begin_scope();
             self.block();
