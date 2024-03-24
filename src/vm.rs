@@ -1,6 +1,6 @@
-use std::{collections::HashMap, result};
+use std::{cell::RefCell, collections::HashMap, io::{stdout, Write}, rc::Rc, result};
 
-use crate::{chunk::{Chunk, OpCode}, compiler, value::Value};
+use crate::{chunk::OpCode, compiler, natives, object::{Function, NativeFn, Object}, value::Value};
 
 #[derive(Debug)]
 pub enum InterpretError {
@@ -33,44 +33,75 @@ macro_rules! binary_op {
         }
     };
 }
+
+#[derive(Clone)]
+struct CallFrame {
+    pub function: Rc<RefCell<Object>>,
+    pub ip: usize,
+    pub stack_start: usize,
+}
+
+impl CallFrame {
+    fn read_instruction(&mut self) -> OpCode {
+        self.ip += 1;
+        self.function.borrow().as_function().get_chunk().code[self.ip - 1]
+    }
+
+    fn get_constant(&mut self, index: usize) -> Value {
+        self.function.borrow().as_function().get_chunk().get_constant(index).clone()
+    }
+}
+
 pub struct VM {
-    chunk: Option<Chunk>,
-    ip: usize,
+    frames: Vec<CallFrame>,
     stack: Vec<Value>,
     globals: HashMap<String, Value>,
 }
 
 impl VM {
     pub fn new() -> Self {
-        Self {
-            chunk: None,
-            ip: 0,
+        let mut vm = Self {
+            frames: Vec::new(),
             stack: Vec::new(),
             globals: HashMap::new(),
-        }
-    }
+        };
 
-    fn read_instruction(&mut self) -> OpCode {
-        self.ip += 1;
-        self.chunk.as_ref().unwrap().code[self.ip - 1]
+        vm.define_native("clock", natives::clock);
+
+        vm
     }
 
     pub fn interpret_source(&mut self, source: &str) -> Result<()> {
         self.interpret_chunk(compiler::compile(source)?)
     }
 
-    pub fn interpret_chunk(&mut self, chunk: Chunk) -> Result<()> {
-        self.chunk = Some(chunk);
-        self.ip = 0;
+    pub fn interpret_chunk(&mut self, function: Function) -> Result<()> {
+        let frame = CallFrame {
+            function: Rc::new(RefCell::new(Object::Function(function))),
+            ip: 0,
+            stack_start: self.stack.len(),
+        };
+
+        let function = frame.function.clone();
+        self.push(Value::Object(function));
+        self.frames.push(frame);
 
         self.run()
     }
     
-    fn get_chunk(&mut self) -> result::Result<&mut Chunk, InterpretError> {
-        match self.chunk.as_mut() {
-            Some(chunk) => Ok(chunk),
-            None => Err(InterpretError::RuntimeError),
+    fn _error(&mut self) {
+        for frame in self.frames.iter().rev() {
+            let function = frame.function.borrow();
+            let function = function.as_function();
+            
+            eprintln!("[line {}] in {}", function.get_chunk().line(frame.ip - 1), if function.name.is_empty() { "script".to_owned() } else { function.name.to_owned() + "()" });
         }
+        self.stack.clear();
+        self.frames.clear();
+    }
+
+    fn define_native(&mut self, name: &str, function: NativeFn) {
+        self.globals.insert(name.to_owned(), Object::NativeFunction(function).into());
     }
     
     fn push(&mut self, value: Value) {
@@ -85,14 +116,56 @@ impl VM {
         self.stack.last()
     }
     
-    fn _error(&mut self) {
-        let line = self.chunk.as_ref().unwrap().line(self.ip - 1);
-        eprintln!("[line {}] in script", line);
+    fn peek_n(&mut self, n: usize) -> Option<&Value> {
+        self.stack.get(self.stack.len() - n - 1)
+    }
+    
+    fn call(&mut self, function: Rc<RefCell<Object>>, arg_count: usize) -> Result<()> {
+        let arity = function.borrow().as_function().arity;
+        if arg_count != arity {
+            runtime_error!(self, "Expected {} arguments but got {}", arity, arg_count);
+            return Err(InterpretError::RuntimeError);
+        }
+        if self.frames.len() == usize::MAX {
+            runtime_error!(self, "Stack overflow.");
+            return Err(InterpretError::RuntimeError);
+        }
+        self.frames.push(CallFrame {
+            function,
+            ip: 0,
+            stack_start: self.stack.len() - arg_count - 1,
+        });
+        Ok(())
+    }
+
+    fn call_value(&mut self, callee: Value, arg_count: usize) -> Result<()> {
+        if let Value::Object(function) = callee {
+            match *function.borrow() {
+                Object::Function(_) => self.call(function.clone(), arg_count),
+                Object::NativeFunction(ref function) => {
+                    let stack_start = self.stack.len() - arg_count;
+                    let args = &mut self.stack[stack_start..];
+                    let result = function(args);
+                    self.stack.truncate(self.stack.len() - arg_count - 1);
+                    self.push(result);
+                    Ok(())
+                }
+            }
+        } else {
+            let frame = self.frames.last_mut().unwrap(); 
+            runtime_error!(self, "Can only call functions and classes.");
+            Err(InterpretError::RuntimeError)
+        }
+    }
+    
+    fn frame(&mut self) -> &mut CallFrame {
+        self.frames.last_mut().unwrap()
     }
     
     fn run(&mut self) -> Result<()> {
         loop {
-            let instruction = self.read_instruction();
+            let instruction = self.frame().read_instruction();
+            let stack_start = self.frame().stack_start;
 
             #[cfg(debug_trace_execution)] {
                 print!("\t");
@@ -100,7 +173,9 @@ impl VM {
                     print!("[ {} ]", value);
                 }
                 println!();
-                println!("{:?}", instruction);
+                stdout().flush().unwrap();
+                let ip = self.frame().ip - 1;
+                println!("({}:{}){:?}", self.frames.len() - 1, ip, instruction);
             }
 
             match instruction {
@@ -135,8 +210,7 @@ impl VM {
                     }
                 }
                 OpCode::Constant(index) => {
-                    let chunk = self.get_chunk()?;
-                    let value = chunk.get_constant(index);
+                    let value = self.frame().get_constant(index);
                     self.push(value);
                 }
                 OpCode::Nil => self.push(Value::Nil),
@@ -144,15 +218,15 @@ impl VM {
                 OpCode::False => self.push(Value::Bool(false)),
                 OpCode::Pop => { self.pop(); }
                 OpCode::GetLocal(index) => {
-                    let value = self.stack[index].clone();
+                    let value = self.stack[stack_start + index].clone();
                     self.push(value);
                 }
                 OpCode::SetLocal(index) => {
                     let value = self.peek().unwrap().clone();
-                    self.stack[index] = value;
+                    self.stack[stack_start + index] = value;
                 }
                 OpCode::GetGlobal(index) => {
-                    let name = self.get_chunk()?.get_constant(index);
+                    let name = self.frame().get_constant(index);
                     if let Value::String(name) = name {
                         if let Some(value) = self.globals.get(&name) {
                             self.push(value.clone());
@@ -166,7 +240,7 @@ impl VM {
                     }
                 }
                 OpCode::SetGlobal(index) => {
-                    let name = self.get_chunk()?.get_constant(index);
+                    let name = self.frame().get_constant(index);
                     if let Value::String(name) = name {
                         if self.globals.contains_key(&name) {
                             let value = self.peek().unwrap().clone();
@@ -182,7 +256,7 @@ impl VM {
                 
                 }
                 OpCode::DefineGlobal(index) => {
-                    let name = self.get_chunk()?.get_constant(index);
+                    let name = self.frame().get_constant(index);
                     if let Value::String(name) = name {
                         let value = self.pop().unwrap();
                         self.globals.insert(name, value);
@@ -201,16 +275,30 @@ impl VM {
                 OpCode::Print => {
                     println!("{}", self.pop().unwrap());
                 }
-                OpCode::Jump(offset) => self.ip += offset,
+                OpCode::Jump(offset) => self.frame().ip += offset,
                 OpCode::JumpIfFalse(offset) => {
                     let value = self.peek().unwrap();
                     if !value.truthy() {
-                        self.ip += offset;
+                        self.frame().ip += offset;
                     }
                 }
-                OpCode::Loop(offset) => self.ip -= offset,
+                OpCode::Loop(offset) => self.frame().ip -= offset,
+                OpCode::Call(arg_count) => {
+                    let callee = self.peek_n(arg_count).unwrap().clone();
+                    self.call_value(callee.clone(), arg_count)?;
+                }
                 OpCode::Return => {
-                    return Ok(());
+                    let result = self.pop().unwrap();
+                    let frame = self.frame();
+                    let stack_len = frame.stack_start;
+                    self.stack.truncate(stack_len);
+                    self.frames.pop();
+                    if self.frames.is_empty() {
+                        self.pop();
+                        return Ok(());
+                    }
+
+                    self.push(result);
                 }
             }
         }

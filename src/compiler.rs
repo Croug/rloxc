@@ -1,9 +1,9 @@
-use std::mem::discriminant;
+use std::{cell::RefCell, mem::discriminant, rc::Rc};
 
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
-use crate::{chunk::{Chunk, OpCode}, scanner::Scanner, token::{Token, TokenType}, value::Value, vm::{InterpretError, Result}};
+use crate::{chunk::{Chunk, OpCode}, object::{Function, Object}, scanner::Scanner, token::{Token, TokenType}, value::Value, vm::{InterpretError, Result}};
 
 #[derive(FromPrimitive, Clone, Copy)]
 pub enum Precedence {
@@ -51,7 +51,7 @@ macro_rules! parse_handler {
 macro_rules! patch_jump {
     ($compiler:ident, $offset:expr, $discriminant:ident) => {
         {
-            let jump = $compiler.current_chunk.as_ref().unwrap().code.len() - 1;
+            let jump = $compiler.get_chunk().code.len() - 1;
             $compiler.patch_instruction($offset, OpCode::$discriminant(jump - $offset));
         }
     }
@@ -59,7 +59,7 @@ macro_rules! patch_jump {
 }
 
 const RULES: [ParseRule; 40] = [
-    /* LeftParen    */ ParseRule::new(parse_handler!(grouping), None, Precedence::None),
+    /* LeftParen    */ ParseRule::new(parse_handler!(grouping), parse_handler!(call), Precedence::Call),
     /* RightParen   */ ParseRule::new(None, None, Precedence::None),
     /* LeftBrace    */ ParseRule::new(None, None, Precedence::None),
     /* RightBrace   */ ParseRule::new(None, None, Precedence::None),
@@ -101,18 +101,24 @@ const RULES: [ParseRule; 40] = [
     /* EOF          */ ParseRule::new(None, None, Precedence::None),
 ];
 
+#[derive(Clone)]
 struct Local {
     name: Token,
     depth: usize,
 }
 
-pub struct Compiler<'a> {
+struct CompileContext {
+    parent: Option<Box<CompileContext>>,
+    function: Function,
     locals: Vec<Local>,
     scope_depth: usize,
+}
+
+pub struct Compiler<'a> {
+    context: Option<CompileContext>,
     scanner: Scanner<'a>,
     current: Option<Token>,
     previous: Option<Token>,
-    current_chunk: Option<Chunk>,
     had_error: bool,
     panic_mode: bool,
 }
@@ -122,12 +128,10 @@ impl<'a> Compiler<'a> {
         let scanner = Scanner::new(source);
 
         Self {
-            locals: Vec::new(),
-            scope_depth: 0,
+            context: None,
             scanner,
             current: None,
             previous: None,
-            current_chunk: None,
             had_error: false,
             panic_mode: false,
         }
@@ -156,6 +160,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn add_return(&mut self) {
+        self.add_instruction(OpCode::Nil);
         self.add_instruction(OpCode::Return);
     }
 
@@ -164,8 +169,17 @@ impl<'a> Compiler<'a> {
         self.add_instruction(OpCode::Constant(index));
     }
 
-    pub fn compile(&mut self) -> Result<Chunk> {
-        self.current_chunk = Some(Chunk::new());
+    pub fn compile(&mut self) -> Result<Function> {
+        self.context = Some(CompileContext {
+            parent: None,
+            function: Function::new(),
+            locals: Vec::new(),
+            scope_depth: 0,
+        });
+        self.context().locals.push(Local {
+            name: Token::new(TokenType::Identifier, "".to_string(), 0),
+            depth: 0,
+        });
 
         self.advance();
         
@@ -173,12 +187,10 @@ impl<'a> Compiler<'a> {
             self.declaration();
         }
 
-        self.end_compiler();
-
         if self.had_error {
             Err(InterpretError::CompileError)
         } else {
-            Ok(self.current_chunk.take().unwrap())
+            Ok(self.end_context())
         }
     }
 
@@ -249,6 +261,11 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn call(&mut self, _: bool) {
+        let arg_count = self.argument_list();
+        self.add_instruction(OpCode::Call(arg_count));
+    }
+
     fn unary(&mut self, _: bool) {
         let operator_type = self.previous.as_ref().unwrap().token_type();
 
@@ -283,10 +300,55 @@ impl<'a> Compiler<'a> {
         self.consume(TokenType::RightBrace, "Expect '}' after block.");
     }
 
+    fn function(&mut self) {
+        self.begin_context();
+        self.begin_scope();
+
+        self.consume(TokenType::LeftParen, "Expect '(' after function name.");
+        if !self.check(TokenType::RightParen) {
+            loop {
+                self.context().function.arity += 1;
+                let param = self.parse_variable("Expect parameter name.");
+                self.define_variable(param);
+
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+        self.consume(TokenType::RightParen, "Expect ')' after parameters.");
+        self.consume(TokenType::LeftBrace, "Expect '{' before function body.");
+        self.block();
+
+        let function = self.end_context();
+        self.add_constant(Value::Object(Rc::new(RefCell::new(Object::Function(function)))));
+    }
+
+    fn fun_declaration(&mut self) {
+        let global = self.parse_variable("Expect function name.");
+        self.mark_initialized();
+        self.function();
+        self.define_variable(global);
+    }
+
     fn print_statement(&mut self) {
         self.expression();
         self.consume(TokenType::Semicolon, "Expect ';' after value.");
         self.add_instruction(OpCode::Print);
+    }
+
+    fn return_statement(&mut self) {
+        if self.context().scope_depth == 0 {
+            self.error("Cannot return from top-level code.");
+        }
+
+        if self.match_token(TokenType::Semicolon) {
+            self.add_return();
+        } else {
+            self.expression();
+            self.consume(TokenType::Semicolon, "Expect ';' after return value.");
+            self.add_instruction(OpCode::Return);
+        }
     }
 
     fn while_statement(&mut self) {
@@ -380,6 +442,8 @@ impl<'a> Compiler<'a> {
             self.for_statement();
         } else if self.match_token(TokenType::If) {
             self.if_statement();
+        } else if self.match_token(TokenType::Return) {
+            self.return_statement();
         } else if self.match_token(TokenType::While) {
             self.while_statement();
         } else if self.match_token(TokenType::LeftBrace) {
@@ -405,7 +469,9 @@ impl<'a> Compiler<'a> {
     }
 
     fn declaration(&mut self) {
-        if self.match_token(TokenType::Var) {
+        if self.match_token(TokenType::Fun) {
+            self.fun_declaration();
+        } else if self.match_token(TokenType::Var) {
             self.var_declaration();
         } else {
             self.statement();
@@ -465,7 +531,7 @@ impl<'a> Compiler<'a> {
 
         self.declare_variable();
 
-        if self.scope_depth > 0 {
+        if self.context().scope_depth > 0 {
             0
         } else {
             let previous = self.previous.as_ref().unwrap().lexeme().clone();
@@ -474,16 +540,36 @@ impl<'a> Compiler<'a> {
     }
 
     fn mark_initialized(&mut self) {
-        self.locals.last_mut().unwrap().depth = self.scope_depth;
+        if self.context().scope_depth == 0 {
+            return;
+        }
+        self.context().locals.last_mut().unwrap().depth = self.context().scope_depth;
     }
 
     fn define_variable(&mut self, global: usize) {
-        if self.scope_depth > 0 {
+        if self.context().scope_depth > 0 {
             self.mark_initialized();
             return;
         }
 
         self.add_instruction(OpCode::DefineGlobal(global));
+    }
+
+    fn argument_list(&mut self) -> usize {
+        let mut arg_count = 0;
+        if !self.check(TokenType::RightParen) {
+            loop {
+                self.expression();
+                arg_count += 1;
+
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+        self.consume(TokenType::RightParen, "Expect ')' after arguments.");
+
+        arg_count
     }
 
     fn and(&mut self, _: bool) {
@@ -506,23 +592,49 @@ impl<'a> Compiler<'a> {
         patch_jump!(self, end_jump, JumpIfFalse);
     }
 
-    fn end_compiler(&mut self) {
+    fn begin_context(&mut self) {
+        let parent = self.context.take().unwrap();
+        self.context = Some(CompileContext {
+            parent: Some(Box::new(parent)),
+            function: Function::new(),
+            locals: Vec::new(),
+            scope_depth: 0,
+        });
+        self.context().function.name = self.previous.as_ref().unwrap().lexeme().clone();
+        self.context().locals.push(Local {
+            name: Token::new(TokenType::Identifier, "".to_string(), 0),
+            depth: 0,
+        });
+    }
+
+    fn end_context(&mut self) -> Function {
         self.add_return();
+
         #[cfg(debug_print_code)] {
             if !self.had_error {
-                if let Some(chunk) = self.current_chunk.as_ref() {
-                    println!("{:?}", chunk);
-                }
+                println!("{:?}", self.context().function);
             }
         }
+
+        let context = self.context.take().unwrap();
+
+        if let Some(parent) = context.parent {
+            self.context = Some(*parent);
+        }
+
+        context.function
+    }
+
+    fn context(&mut self) -> &mut CompileContext {
+        self.context.as_mut().unwrap()
     }
 
     fn get_chunk(&mut self) -> &mut Chunk {
-        self.current_chunk.as_mut().unwrap()
+        self.context().function.get_chunk_mut()
     }
 
     fn resolve_local(&mut self, name: &Token) -> usize {
-        for (i, local) in self.locals.iter().enumerate().rev() {
+        for (i, local) in self.context().locals.iter().enumerate().rev() {
             if name.lexeme() == local.name.lexeme() {
                 if local.depth == usize::MAX {
                     self.error("Cannot read local variable in its own initializer.");
@@ -535,34 +647,35 @@ impl<'a> Compiler<'a> {
     }
 
     fn begin_scope(&mut self) {
-        self.scope_depth += 1;
+        self.context().scope_depth += 1;
     }
 
     fn end_scope(&mut self) {
-        self.scope_depth -= 1;
+        self.context().scope_depth -= 1;
 
-        while self.locals.len() > 0 && self.locals.last().unwrap().depth > self.scope_depth {
+        while self.context().locals.len() > 0 && self.context().locals.last().unwrap().depth > self.context().scope_depth {
             self.add_instruction(OpCode::Pop);
-            self.locals.pop();
+            self.context().locals.pop();
         }
     }
 
     fn add_local(&mut self, name: Token) {
-        self.locals.push(Local {
+        self.context().locals.push(Local {
             name,
             depth: usize::MAX,
         })
     }
 
     fn declare_variable(&mut self) {
-        if self.scope_depth == 0 {
+        if self.context().scope_depth == 0 {
             return;
         }
 
         let name = self.previous.as_ref().unwrap().clone();
         let mut err = false;
-        for local in self.locals.iter().rev() {
-            if local.depth != usize::MAX && local.depth < self.scope_depth {
+        let scope_depth = self.context().scope_depth;
+        for local in self.context().locals.iter().rev() {
+            if local.depth != usize::MAX && local.depth < scope_depth {
                 break;
             }
 
@@ -643,7 +756,7 @@ impl<'a> Compiler<'a> {
     }
 }
 
-pub fn compile(source: &str) -> Result<Chunk> {
+pub fn compile(source: &str) -> Result<Function> {
     let mut compiler = Compiler::new(source);
 
     compiler.compile()

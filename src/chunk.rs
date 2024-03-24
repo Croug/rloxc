@@ -28,6 +28,7 @@ pub enum OpCode {
     Jump(usize),
     JumpIfFalse(usize),
     Loop(usize),
+    Call(usize),
     Return,
 }
 
@@ -69,6 +70,7 @@ impl OpCode {
             OpCode::Jump(offset) => format!("OP_JUMP({})", offset),
             OpCode::JumpIfFalse(offset) => format!("OP_JUMP_IF_FALSE({})", offset),
             OpCode::Loop(offset) => format!("OP_LOOP({})", offset),
+            OpCode::Call(arity) => format!("OP_CALL({})", arity),
             OpCode::Return => "OP_RETURN".to_string(),
         }
     }
@@ -124,7 +126,7 @@ impl Chunk {
         self.constants.len() - 1
     }
 
-    pub fn get_constant(&mut self, index: usize) -> Value {
+    pub fn get_constant(&self, index: usize) -> Value {
         self.constants[index].clone()
     }
 }

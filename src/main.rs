@@ -7,6 +7,8 @@ mod compiler;
 mod scanner;
 mod token;
 mod value;
+mod object;
+mod natives;
 
 #[derive(Parser)]
 struct Cli {
