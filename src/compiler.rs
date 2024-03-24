@@ -134,23 +134,24 @@ impl<'a> Compiler<'a> {
     }
 
     fn add_instruction(&mut self, instruction: OpCode) {
-        let chunk = self.current_chunk.as_mut().unwrap();
-        chunk.write_chunk(instruction, self.previous.as_ref().unwrap().line());
+        let line = self.previous.as_ref().unwrap().line();
+        let chunk = self.get_chunk();
+        chunk.write_chunk(instruction, line);
     }
 
     fn add_jump(&mut self, instruction: OpCode) -> usize {
         self.add_instruction(instruction);
 
-        self.current_chunk.as_ref().unwrap().code.len() - 1
+        self.get_chunk().code.len() - 1
     }
 
     fn add_loop(&mut self, loop_start: usize) {
-        let offset = self.current_chunk.as_ref().unwrap().code.len() - loop_start + 1;
+        let offset = self.get_chunk().code.len() - loop_start + 1;
         self.add_instruction(OpCode::Loop(offset))
     }
 
     fn patch_instruction(&mut self, address: usize, instruction: OpCode) {
-        let chunk = self.current_chunk.as_mut().unwrap();
+        let chunk = self.get_chunk();
         chunk.code[address] = instruction;
     }
 
@@ -159,7 +160,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn add_constant(&mut self, value: Value) {
-        let index = self.current_chunk.as_mut().unwrap().set_constant(value);
+        let index = self.get_chunk().set_constant(value);
         self.add_instruction(OpCode::Constant(index));
     }
 
@@ -191,7 +192,7 @@ impl<'a> Compiler<'a> {
         let (set_op, get_op) = if arg < usize::MAX {
             (OpCode::SetLocal(arg), OpCode::GetLocal(arg))
         } else {
-            arg = self.current_chunk.as_mut().unwrap().set_constant(Value::String(name.lexeme().clone()));
+            arg = self.get_chunk().set_constant(Value::String(name.lexeme().clone()));
             (OpCode::SetGlobal(arg), OpCode::GetGlobal(arg))
         };
         
@@ -289,7 +290,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn while_statement(&mut self) {
-        let loop_start = self.current_chunk.as_ref().unwrap().code.len();
+        let loop_start = self.get_chunk().code.len();
         self.consume(TokenType::LeftParen, "Expect '(' after 'while'.");
         self.expression();
         self.consume(TokenType::RightParen, "Expect ')' after condition.");
@@ -319,7 +320,7 @@ impl<'a> Compiler<'a> {
             self.expression_statement();
         }
 
-        let mut loop_start = self.current_chunk.as_ref().unwrap().code.len();
+        let mut loop_start = self.get_chunk().code.len();
         let exit_jump = if !self.match_token(TokenType::Semicolon) {
             self.expression();
             self.consume(TokenType::Semicolon, "Expect ';' after loop condition.");
@@ -333,7 +334,7 @@ impl<'a> Compiler<'a> {
 
         if !self.match_token(TokenType::RightParen) {
             let body_jump = self.add_jump(OpCode::Nil);
-            let increment_start = self.current_chunk.as_ref().unwrap().code.len();
+            let increment_start = self.get_chunk().code.len();
             self.expression();
             self.add_instruction(OpCode::Pop);
             self.consume(TokenType::RightParen, "Expect ')' after for clauses.");
@@ -467,7 +468,8 @@ impl<'a> Compiler<'a> {
         if self.scope_depth > 0 {
             0
         } else {
-            self.current_chunk.as_mut().unwrap().set_constant(Value::String(self.previous.as_ref().unwrap().lexeme().clone()))
+            let previous = self.previous.as_ref().unwrap().lexeme().clone();
+            self.get_chunk().set_constant(Value::String(previous))
         }
     }
 
@@ -513,6 +515,10 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
+    }
+
+    fn get_chunk(&mut self) -> &mut Chunk {
+        self.current_chunk.as_mut().unwrap()
     }
 
     fn resolve_local(&mut self, name: &Token) -> usize {
