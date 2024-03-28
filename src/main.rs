@@ -1,5 +1,7 @@
 use clap::Parser;
-use std::{io::{Read, Write}, path::PathBuf};
+use object::NativeFn;
+use value::Value;
+use std::{io::{Read, Write}, path::PathBuf, sync::mpsc};
 
 mod chunk;
 mod vm;
@@ -15,11 +17,19 @@ struct Cli {
     file: Option<PathBuf>,
 }
 
+fn exit(_: &mut [Value]) -> Value {
+    println!("Goodbye!");
+    std::process::exit(0);
+}
+
 fn repl() {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     let mut vm = vm::VM::new();
     let mut line = String::new();
+
+    vm.define_native("exit", exit);
+
     loop {
         print!(">>> ");
         stdout.flush().unwrap();

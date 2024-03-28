@@ -1,9 +1,9 @@
-use std::{cell::RefCell, mem::discriminant, rc::Rc};
+use std::{cell::RefCell, mem::discriminant, ops::DerefMut, rc::Rc};
 
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
-use crate::{chunk::{Chunk, OpCode}, object::{Function, Object}, scanner::Scanner, token::{Token, TokenType}, value::Value, vm::{InterpretError, Result}};
+use crate::{chunk::{Chunk, OpCode}, object::{Closure, Function, Object}, scanner::Scanner, token::{Token, TokenType}, value::Value, vm::{InterpretError, Result}};
 
 #[derive(FromPrimitive, Clone, Copy)]
 pub enum Precedence {
@@ -107,11 +107,44 @@ struct Local {
     depth: usize,
 }
 
+pub struct Upvalue {
+    index: usize,
+    is_local: bool,
+}
+
+impl Upvalue {
+    pub fn new(index: usize, is_local: bool) -> Self {
+        Self {
+            index,
+            is_local,
+        }
+    }
+}
+
 struct CompileContext {
     parent: Option<Box<CompileContext>>,
     function: Function,
     locals: Vec<Local>,
     scope_depth: usize,
+}
+
+impl CompileContext {
+    fn parent(&mut self) -> Option<&mut CompileContext> {
+        self.parent.as_deref_mut()
+    }
+    fn resolve_local(&self, name: &Token) -> (Option<usize>, Option<&'static str>) {
+        for (i, local) in self.locals.iter().enumerate().rev() {
+            if name.lexeme() == local.name.lexeme() {
+                return (Some(i), if local.depth == usize::MAX {
+                    Some("Cannot read local variable in its own initializer.")
+                } else {
+                    None
+                })
+            }
+        }
+
+        (None, None)
+    }
 }
 
 pub struct Compiler<'a> {
@@ -200,11 +233,15 @@ impl<'a> Compiler<'a> {
     }
 
     fn named_variable(&mut self, name: Token, can_assign: bool) {
-        let mut arg = self.resolve_local(&name);
-        let (set_op, get_op) = if arg < usize::MAX {
+        let (arg, err) = self.context().resolve_local(&name);
+        if let Some(err) = err {
+            self.error(err)
+        }
+        let (set_op, get_op) = if arg.is_some() {
+            let arg = arg.unwrap();
             (OpCode::SetLocal(arg), OpCode::GetLocal(arg))
         } else {
-            arg = self.get_chunk().set_constant(Value::String(name.lexeme().clone()));
+            let arg = self.get_chunk().set_constant(Value::String(name.lexeme().clone()));
             (OpCode::SetGlobal(arg), OpCode::GetGlobal(arg))
         };
         
@@ -321,7 +358,8 @@ impl<'a> Compiler<'a> {
         self.block();
 
         let function = self.end_context();
-        self.add_constant(Value::Object(Rc::new(RefCell::new(Object::Function(function)))));
+        let constant = self.get_chunk().set_constant(Value::Function(Rc::new(function)));
+        self.add_instruction(OpCode::Closure(constant));
     }
 
     fn fun_declaration(&mut self) {
@@ -633,19 +671,6 @@ impl<'a> Compiler<'a> {
         self.context().function.get_chunk_mut()
     }
 
-    fn resolve_local(&mut self, name: &Token) -> usize {
-        for (i, local) in self.context().locals.iter().enumerate().rev() {
-            if name.lexeme() == local.name.lexeme() {
-                if local.depth == usize::MAX {
-                    self.error("Cannot read local variable in its own initializer.");
-                }
-                return i;
-            }
-        }
-
-        usize::MAX
-    }
-
     fn begin_scope(&mut self) {
         self.context().scope_depth += 1;
     }
@@ -664,6 +689,30 @@ impl<'a> Compiler<'a> {
             name,
             depth: usize::MAX,
         })
+    }
+
+    fn add_upvalue(&mut self, index: usize, is_local: bool) -> usize {
+        let upvalues = &mut self.context().function.upvalues;
+        upvalues.iter().enumerate().find(|(_, upvalue)| upvalue.index == index && upvalue.is_local == is_local).map(|(i, _)| i).unwrap_or_else(|| {
+            upvalues.push(Upvalue::new(index, is_local));
+            upvalues.len() - 1
+        })
+    }
+
+    fn resolve_upvalue(&mut self, name: &Token) -> Option<usize> {
+        let parent = self.context().parent()?;
+        let (local, err) = parent.resolve_local(name);
+
+        if let Some(err) = err {
+            self.error(err);
+        }
+
+        if let Some(local) = local {
+            return Some(self.add_upvalue(local, true))
+        }
+    
+        let index = parent.resolve_upvalue(name)?;
+        return Some(self.add_upvalue(index, false));
     }
 
     fn declare_variable(&mut self) {

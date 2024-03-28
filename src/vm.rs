@@ -1,6 +1,8 @@
-use std::{cell::RefCell, collections::HashMap, io::{stdout, Write}, rc::Rc, result};
+#[allow(unused_imports)] use std::io::{stdout, Write};
 
-use crate::{chunk::OpCode, compiler, natives, object::{Function, NativeFn, Object}, value::Value};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, result};
+
+use crate::{chunk::OpCode, compiler, natives, object::{Closure, Function, NativeFn, Object}, value::Value};
 
 #[derive(Debug)]
 pub enum InterpretError {
@@ -36,7 +38,7 @@ macro_rules! binary_op {
 
 #[derive(Clone)]
 struct CallFrame {
-    pub function: Rc<RefCell<Object>>,
+    pub closure: Rc<RefCell<Object>>,
     pub ip: usize,
     pub stack_start: usize,
 }
@@ -44,11 +46,11 @@ struct CallFrame {
 impl CallFrame {
     fn read_instruction(&mut self) -> OpCode {
         self.ip += 1;
-        self.function.borrow().as_function().get_chunk().code[self.ip - 1]
+        self.closure.borrow().as_function().get_chunk().code[self.ip - 1]
     }
 
     fn get_constant(&mut self, index: usize) -> Value {
-        self.function.borrow().as_function().get_chunk().get_constant(index).clone()
+        self.closure.borrow().as_function().get_chunk().get_constant(index).clone()
     }
 }
 
@@ -77,12 +79,12 @@ impl VM {
 
     pub fn interpret_chunk(&mut self, function: Function) -> Result<()> {
         let frame = CallFrame {
-            function: Rc::new(RefCell::new(Object::Function(function))),
+            closure: Rc::new(RefCell::new(Object::Closure(Closure::new(Rc::new(function))))),
             ip: 0,
             stack_start: self.stack.len(),
         };
 
-        let function = frame.function.clone();
+        let function = frame.closure.clone();
         self.push(Value::Object(function));
         self.frames.push(frame);
 
@@ -91,7 +93,7 @@ impl VM {
     
     fn _error(&mut self) {
         for frame in self.frames.iter().rev() {
-            let function = frame.function.borrow();
+            let function = frame.closure.borrow();
             let function = function.as_function();
             
             eprintln!("[line {}] in {}", function.get_chunk().line(frame.ip - 1), if function.name.is_empty() { "script".to_owned() } else { function.name.to_owned() + "()" });
@@ -100,7 +102,7 @@ impl VM {
         self.frames.clear();
     }
 
-    fn define_native(&mut self, name: &str, function: NativeFn) {
+    pub fn define_native(&mut self, name: &str, function: NativeFn) {
         self.globals.insert(name.to_owned(), Object::NativeFunction(function).into());
     }
     
@@ -131,7 +133,7 @@ impl VM {
             return Err(InterpretError::RuntimeError);
         }
         self.frames.push(CallFrame {
-            function,
+            closure: function,
             ip: 0,
             stack_start: self.stack.len() - arg_count - 1,
         });
@@ -141,7 +143,7 @@ impl VM {
     fn call_value(&mut self, callee: Value, arg_count: usize) -> Result<()> {
         if let Value::Object(function) = callee {
             match *function.borrow() {
-                Object::Function(_) => self.call(function.clone(), arg_count),
+                Object::Closure(_) => self.call(function.clone(), arg_count),
                 Object::NativeFunction(ref function) => {
                     let stack_start = self.stack.len() - arg_count;
                     let args = &mut self.stack[stack_start..];
@@ -150,9 +152,12 @@ impl VM {
                     self.push(result);
                     Ok(())
                 }
+                _ => {
+                    runtime_error!(self, "Can only call functions and classes.");
+                    Err(InterpretError::RuntimeError)
+                }
             }
         } else {
-            let frame = self.frames.last_mut().unwrap(); 
             runtime_error!(self, "Can only call functions and classes.");
             Err(InterpretError::RuntimeError)
         }
@@ -286,6 +291,16 @@ impl VM {
                 OpCode::Call(arg_count) => {
                     let callee = self.peek_n(arg_count).unwrap().clone();
                     self.call_value(callee.clone(), arg_count)?;
+                }
+                OpCode::Closure(index) => {
+                    let function = self.frame().get_constant(index);
+                    if let Value::Function(function) = function {
+                        let closure = Closure::new(function.clone());
+                        self.push(Object::Closure(closure).into());
+                    } else {
+                        runtime_error!(self, "Closure constant must be a function.");
+                        return Err(InterpretError::RuntimeError);
+                    }
                 }
                 OpCode::Return => {
                     let result = self.pop().unwrap();

@@ -1,19 +1,19 @@
 use std::{cell::RefCell, fmt::{Debug, Display}, rc::Rc};
 
-use crate::{chunk::Chunk, value::Value};
+use crate::{chunk::Chunk, compiler::Upvalue, value::Value};
 
 pub type NativeFn = fn(&mut [Value]) -> Value;
 
 #[derive(Debug, PartialEq)]
 pub enum Object {
-    Function(Function),
+    Closure(Closure),
     NativeFunction(NativeFn),
 }
 
 impl Display for Object {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Object::Function(func) => write!(f, "{}", func),
+            Object::Closure(func) => write!(f, "{}", func),
             Object::NativeFunction(_) => write!(f, "<native fn>"),
         }
     }
@@ -22,18 +22,12 @@ impl Display for Object {
 impl Object {
     pub fn as_function(&self) -> &Function {
         match self {
-            Object::Function(func) => func,
-            _ => panic!("Expected function object"),
-        }
-    }
-    pub fn as_function_mut(&mut self) -> &mut Function {
-        match self {
-            Object::Function(func) => func,
+            Object::Closure(closure) => closure.function.as_ref(),
             _ => panic!("Expected function object"),
         }
     }
     pub fn is_function(&self) -> bool {
-        matches!(self, Object::Function(_)) || matches!(self, Object::NativeFunction(_))
+        matches!(self, Object::Closure(_)) || matches!(self, Object::NativeFunction(_))
     }
 }
 
@@ -43,10 +37,31 @@ impl Into<Value> for Object {
     }
 }
 
+
+#[derive(Debug, PartialEq)]
+pub struct Closure {
+    pub function: Rc<Function>,
+}
+
+impl Closure {
+    pub fn new(function: Rc<Function>) -> Self {
+        Self {
+            function,
+        }
+    }
+}
+
+impl Display for Closure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.function)
+    }
+}
+
 pub struct Function {
     pub arity: usize,
     pub chunk: Chunk,
     pub name: String,
+    pub upvalues: Vec<Upvalue>,
 }
 
 impl PartialEq for Function {
@@ -61,6 +76,7 @@ impl Function {
             arity: 0,
             chunk: Chunk::new(),
             name: String::new(),
+            upvalues: Vec::new(),
         }
     }
 

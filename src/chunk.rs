@@ -29,6 +29,7 @@ pub enum OpCode {
     JumpIfFalse(usize),
     Loop(usize),
     Call(usize),
+    Closure(usize),
     Return,
 }
 
@@ -71,6 +72,10 @@ impl OpCode {
             OpCode::JumpIfFalse(offset) => format!("OP_JUMP_IF_FALSE({})", offset),
             OpCode::Loop(offset) => format!("OP_LOOP({})", offset),
             OpCode::Call(arity) => format!("OP_CALL({})", arity),
+            OpCode::Closure(index) => {
+                let value = &chunk.constants[*index];
+                format!("OP_CLOSURE({}:{})", index, value)
+            }
             OpCode::Return => "OP_RETURN".to_string(),
         }
     }

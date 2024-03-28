@@ -1,6 +1,6 @@
 use std::{cell::RefCell, fmt::Display, rc::Rc};
 
-use crate::object::Object;
+use crate::object::{Function, Object};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -8,6 +8,7 @@ pub enum Value {
     Nil,
     Number(f64),
     String(String),
+    Function(Rc<Function>),
     Object(Rc<RefCell<Object>>),
 }
 
@@ -18,6 +19,7 @@ impl Value {
             Value::Nil => false,
             Value::Number(n) => *n != 0.0,
             Value::String(s) => !s.is_empty(),
+            Value::Function(_) => true,
             Value::Object(_) => true,
         }
     }
@@ -28,6 +30,7 @@ impl Value {
             Value::Nil => "nil",
             Value::Number(_) => "number",
             Value::String(_) => "string",
+            Value::Function(_) => "function",
             Value::Object(_) => "object",
         }
     }
@@ -40,6 +43,7 @@ impl Display for Value {
             Value::Nil => write!(f, "nil"),
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{}", s),
+            Value::Function(func) => write!(f, "{}", func.name),
             Value::Object(o) => write!(f, "{}", o.borrow()),
         }
     }
