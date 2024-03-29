@@ -15,6 +15,8 @@ pub enum OpCode {
     GetGlobal(usize),
     SetGlobal(usize),
     DefineGlobal(usize),
+    GetUpvalue(usize),
+    SetUpvalue(usize),
     Equal,
     Greater,
     Less,
@@ -30,6 +32,7 @@ pub enum OpCode {
     Loop(usize),
     Call(usize),
     Closure(usize),
+    Upvalue(bool, usize),
     Return,
 }
 
@@ -58,6 +61,8 @@ impl OpCode {
                 let value = &chunk.constants[*index];
                 format!("OP_DEFINE_GLOBAL({}:{})", index, value)
             }
+            OpCode::GetUpvalue(index) => format!("OP_GET_UPVALUE({})", index),
+            OpCode::SetUpvalue(index) => format!("OP_SET_UPVALUE({})", index),
             OpCode::Equal => "OP_EQUAL".to_string(),
             OpCode::Greater => "OP_GREATER".to_string(),
             OpCode::Less => "OP_LESS".to_string(),
@@ -76,6 +81,7 @@ impl OpCode {
                 let value = &chunk.constants[*index];
                 format!("OP_CLOSURE({}:{})", index, value)
             }
+            OpCode::Upvalue(is_local, index) => format!("|\tOP_UPVALUE({}:{})", if *is_local { "local" } else { "upvalue" }, index),
             OpCode::Return => "OP_RETURN".to_string(),
         }
     }

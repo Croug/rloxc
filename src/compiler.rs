@@ -132,18 +132,38 @@ impl CompileContext {
     fn parent(&mut self) -> Option<&mut CompileContext> {
         self.parent.as_deref_mut()
     }
-    fn resolve_local(&self, name: &Token) -> (Option<usize>, Option<&'static str>) {
+    fn resolve_local(&self, name: &Token) -> Option<usize> {
         for (i, local) in self.locals.iter().enumerate().rev() {
             if name.lexeme() == local.name.lexeme() {
-                return (Some(i), if local.depth == usize::MAX {
-                    Some("Cannot read local variable in its own initializer.")
-                } else {
+                return if local.depth == usize::MAX {
                     None
-                })
+                } else {
+                    Some(i)
+                };
             }
         }
 
-        (None, None)
+        None
+    }
+
+    fn add_upvalue(&mut self, index: usize, is_local: bool) -> usize {
+        let upvalues = &mut self.function.upvalues;
+        upvalues.iter().enumerate().find(|(_, upvalue)| upvalue.index == index && upvalue.is_local == is_local).map(|(i, _)| i).unwrap_or_else(|| {
+            upvalues.push(Upvalue::new(index, is_local));
+            upvalues.len() - 1
+        })
+    }
+
+    fn resolve_upvalue(&mut self, name: Token) -> Option<usize> {
+        let parent = self.parent()?;
+        let local = parent.resolve_local(&name);
+
+        if let Some(local) = local {
+            return Some(self.add_upvalue( local, true))
+        }
+    
+        let index = parent.resolve_upvalue(name)?;
+        return Some(self.add_upvalue( index, false));
     }
 }
 
@@ -233,17 +253,17 @@ impl<'a> Compiler<'a> {
     }
 
     fn named_variable(&mut self, name: Token, can_assign: bool) {
-        let (arg, err) = self.context().resolve_local(&name);
-        if let Some(err) = err {
-            self.error(err)
-        }
-        let (set_op, get_op) = if arg.is_some() {
-            let arg = arg.unwrap();
-            (OpCode::SetLocal(arg), OpCode::GetLocal(arg))
-        } else {
-            let arg = self.get_chunk().set_constant(Value::String(name.lexeme().clone()));
-            (OpCode::SetGlobal(arg), OpCode::GetGlobal(arg))
-        };
+        let arg = self.context().resolve_local(&name);
+
+        let context = self.context();
+        let (set_op, get_op) = arg
+            .map(|arg| (OpCode::SetLocal(arg), OpCode::GetLocal(arg)))
+            .or_else(|| context.resolve_upvalue(name.clone())
+                .map(|index| (OpCode::SetUpvalue(index), OpCode::GetUpvalue(index))))
+            .unwrap_or_else(|| {
+                let index = self.get_chunk().set_constant(Value::String(name.lexeme().clone()));
+                (OpCode::SetGlobal(index), OpCode::GetGlobal(index))
+            });
         
         if can_assign && self.match_token(TokenType::Equal) {
             self.expression();
@@ -357,9 +377,13 @@ impl<'a> Compiler<'a> {
         self.consume(TokenType::LeftBrace, "Expect '{' before function body.");
         self.block();
 
-        let function = self.end_context();
-        let constant = self.get_chunk().set_constant(Value::Function(Rc::new(function)));
+        let function = Rc::new(self.end_context());
+        let constant = self.get_chunk().set_constant(Value::Function(function.clone()));
         self.add_instruction(OpCode::Closure(constant));
+
+        function.upvalues.iter().for_each(|upvalue| {
+            self.add_instruction(OpCode::Upvalue(upvalue.is_local, upvalue.index));
+        });
     }
 
     fn fun_declaration(&mut self) {
@@ -689,30 +713,6 @@ impl<'a> Compiler<'a> {
             name,
             depth: usize::MAX,
         })
-    }
-
-    fn add_upvalue(&mut self, index: usize, is_local: bool) -> usize {
-        let upvalues = &mut self.context().function.upvalues;
-        upvalues.iter().enumerate().find(|(_, upvalue)| upvalue.index == index && upvalue.is_local == is_local).map(|(i, _)| i).unwrap_or_else(|| {
-            upvalues.push(Upvalue::new(index, is_local));
-            upvalues.len() - 1
-        })
-    }
-
-    fn resolve_upvalue(&mut self, name: &Token) -> Option<usize> {
-        let parent = self.context().parent()?;
-        let (local, err) = parent.resolve_local(name);
-
-        if let Some(err) = err {
-            self.error(err);
-        }
-
-        if let Some(local) = local {
-            return Some(self.add_upvalue(local, true))
-        }
-    
-        let index = parent.resolve_upvalue(name)?;
-        return Some(self.add_upvalue(index, false));
     }
 
     fn declare_variable(&mut self) {

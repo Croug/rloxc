@@ -1,6 +1,6 @@
-use std::{cell::RefCell, fmt::{Debug, Display}, rc::Rc};
+use std::{borrow::BorrowMut, cell::RefCell, fmt::{Debug, Display}, ops::Deref, rc::Rc};
 
-use crate::{chunk::Chunk, compiler::Upvalue, value::Value};
+use crate::{chunk::Chunk, compiler, value::Value, vm::VM};
 
 pub type NativeFn = fn(&mut [Value]) -> Value;
 
@@ -26,6 +26,21 @@ impl Object {
             _ => panic!("Expected function object"),
         }
     }
+
+    pub fn as_closure(&self) -> &Closure {
+        match self {
+            Object::Closure(closure) => closure,
+            _ => panic!("Expected closure object"),
+        }
+    }
+
+    pub fn as_closure_mut(&mut self) -> &mut Closure {
+        match self {
+            Object::Closure(closure) => closure,
+            _ => panic!("Expected closure object"),
+        }
+    }
+
     pub fn is_function(&self) -> bool {
         matches!(self, Object::Closure(_)) || matches!(self, Object::NativeFunction(_))
     }
@@ -37,16 +52,40 @@ impl Into<Value> for Object {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub enum Upvalue {
+    LocalOpen(usize),
+    ForeignOpen(usize),
+    Closed(Value),
+}
+
+impl Upvalue {
+    pub fn get_value(&self, vm: &VM) -> Value {
+        match self {
+            Upvalue::LocalOpen(index) | Upvalue::ForeignOpen(index) => vm.get_value(*index),
+            Upvalue::Closed(value) => value.clone(),
+        }
+    }
+
+    pub fn set_value(&mut self, vm: &mut VM, value: Value) {
+        match self {
+            Upvalue::LocalOpen(index) | Upvalue::ForeignOpen(index) => vm.set_value(*index, value),
+            Upvalue::Closed(closed) => *closed = value,
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub struct Closure {
     pub function: Rc<Function>,
+    pub upvalues: Vec<Rc<RefCell<Upvalue>>>,
 }
 
 impl Closure {
     pub fn new(function: Rc<Function>) -> Self {
         Self {
             function,
+            upvalues: Vec::new(),
         }
     }
 }
@@ -61,7 +100,7 @@ pub struct Function {
     pub arity: usize,
     pub chunk: Chunk,
     pub name: String,
-    pub upvalues: Vec<Upvalue>,
+    pub upvalues: Vec<compiler::Upvalue>,
 }
 
 impl PartialEq for Function {

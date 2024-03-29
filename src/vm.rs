@@ -73,6 +73,14 @@ impl VM {
         vm
     }
 
+    pub fn get_value(&self, index: usize) -> Value {
+        self.stack[index].clone()
+    }
+
+    pub fn set_value(&mut self, index: usize, value: Value) {
+        self.stack[index] = value;
+    }
+
     pub fn interpret_source(&mut self, source: &str) -> Result<()> {
         self.interpret_chunk(compiler::compile(source)?)
     }
@@ -270,6 +278,15 @@ impl VM {
                         return Err(InterpretError::RuntimeError);
                     }
                 }
+                OpCode::GetUpvalue(index) => {
+                    let upvalue = self.frame().closure.borrow().as_closure().upvalues[index].clone();
+                    let value = upvalue.borrow().get_value(self);
+                }
+                OpCode::SetUpvalue(index) => {
+                    let upvalue = self.frame().closure.borrow().as_closure().upvalues[index].clone();
+                    let value = self.peek().unwrap().clone();
+                    upvalue.borrow_mut().set_value(self, value);
+                }
                 OpCode::Equal => {
                     let b = self.pop().unwrap();
                     let a = self.pop().unwrap();
@@ -301,6 +318,10 @@ impl VM {
                         runtime_error!(self, "Closure constant must be a function.");
                         return Err(InterpretError::RuntimeError);
                     }
+                }
+                OpCode::Upvalue(_, _) => {
+                    runtime_error!(self, "Upvalue declaration only valid immediately following closure or upvalue instruction.");
+                    return Err(InterpretError::RuntimeError);
                 }
                 OpCode::Return => {
                     let result = self.pop().unwrap();
