@@ -55,21 +55,23 @@ impl Into<Value> for Object {
 #[derive(Debug, PartialEq)]
 pub enum Upvalue {
     LocalOpen(usize),
-    ForeignOpen(usize),
+    ForeignOpen(Rc<RefCell<Upvalue>>),
     Closed(Value),
 }
 
 impl Upvalue {
     pub fn get_value(&self, vm: &VM) -> Value {
         match self {
-            Upvalue::LocalOpen(index) | Upvalue::ForeignOpen(index) => vm.get_value(*index),
+            Upvalue::LocalOpen(index) => vm.get_value(*index),
+            Upvalue::ForeignOpen(upvalue) => upvalue.borrow().get_value(vm),
             Upvalue::Closed(value) => value.clone(),
         }
     }
 
     pub fn set_value(&mut self, vm: &mut VM, value: Value) {
         match self {
-            Upvalue::LocalOpen(index) | Upvalue::ForeignOpen(index) => vm.set_value(*index, value),
+            Upvalue::LocalOpen(index) => vm.set_value(*index, value),
+            Upvalue::ForeignOpen(upvalue) => upvalue.as_ref().borrow_mut().set_value(vm, value),
             Upvalue::Closed(closed) => *closed = value,
         }
     }

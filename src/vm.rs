@@ -2,7 +2,7 @@
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc, result};
 
-use crate::{chunk::OpCode, compiler, natives, object::{Closure, Function, NativeFn, Object}, value::Value};
+use crate::{chunk::OpCode, compiler, natives, object::{Closure, Function, NativeFn, Object, Upvalue}, value::Value};
 
 #[derive(Debug)]
 pub enum InterpretError {
@@ -44,6 +44,10 @@ struct CallFrame {
 }
 
 impl CallFrame {
+    fn peek(&mut self) -> OpCode {
+        self.closure.borrow().as_function().get_chunk().code[self.ip].clone()
+    }
+
     fn read_instruction(&mut self) -> OpCode {
         self.ip += 1;
         self.closure.borrow().as_function().get_chunk().code[self.ip - 1]
@@ -74,11 +78,13 @@ impl VM {
     }
 
     pub fn get_value(&self, index: usize) -> Value {
-        self.stack[index].clone()
+        let stack_start = self.frames.last().unwrap().stack_start;
+        self.stack[stack_start + index].clone()
     }
 
     pub fn set_value(&mut self, index: usize, value: Value) {
-        self.stack[index] = value;
+        let stack_start = self.frames.last().unwrap().stack_start;
+        self.stack[stack_start + index] = value;
     }
 
     pub fn interpret_source(&mut self, source: &str) -> Result<()> {
@@ -188,7 +194,9 @@ impl VM {
                 println!();
                 stdout().flush().unwrap();
                 let ip = self.frame().ip - 1;
-                println!("({}:{}){:?}", self.frames.len() - 1, ip, instruction);
+                let instruction = instruction.to_string_resolved(self.frame().closure.borrow().as_function().get_chunk());
+                let function = self.frame().closure.borrow().to_string();
+                println!("({function}:{ip}){instruction}");
             }
 
             match instruction {
@@ -281,6 +289,7 @@ impl VM {
                 OpCode::GetUpvalue(index) => {
                     let upvalue = self.frame().closure.borrow().as_closure().upvalues[index].clone();
                     let value = upvalue.borrow().get_value(self);
+                    self.push(value);
                 }
                 OpCode::SetUpvalue(index) => {
                     let upvalue = self.frame().closure.borrow().as_closure().upvalues[index].clone();
@@ -312,7 +321,17 @@ impl VM {
                 OpCode::Closure(index) => {
                     let function = self.frame().get_constant(index);
                     if let Value::Function(function) = function {
-                        let closure = Closure::new(function.clone());
+                        let mut closure = Closure::new(function.clone());
+                        while let OpCode::Upvalue(is_local, index) = self.frame().peek().clone() {
+                            self.frame().read_instruction();
+                            let upvalue = if is_local {
+                                Upvalue::LocalOpen(index)
+                            } else {
+                                let upvalue = self.frame().closure.borrow().as_closure().upvalues[index].clone();
+                                Upvalue::ForeignOpen(upvalue)
+                            };
+                            closure.upvalues.push(Rc::new(RefCell::new(upvalue)));
+                        }
                         self.push(Object::Closure(closure).into());
                     } else {
                         runtime_error!(self, "Closure constant must be a function.");

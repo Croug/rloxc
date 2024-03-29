@@ -148,6 +148,7 @@ impl CompileContext {
 
     fn add_upvalue(&mut self, index: usize, is_local: bool) -> usize {
         let upvalues = &mut self.function.upvalues;
+
         upvalues.iter().enumerate().find(|(_, upvalue)| upvalue.index == index && upvalue.is_local == is_local).map(|(i, _)| i).unwrap_or_else(|| {
             upvalues.push(Upvalue::new(index, is_local));
             upvalues.len() - 1
