@@ -79,12 +79,11 @@ impl VM {
 
     pub fn get_value(&self, index: usize) -> Value {
         let stack_start = self.frames.last().unwrap().stack_start;
-        self.stack[stack_start + index].clone()
+        self.stack[index].clone()
     }
 
     pub fn set_value(&mut self, index: usize, value: Value) {
-        let stack_start = self.frames.last().unwrap().stack_start;
-        self.stack[stack_start + index] = value;
+        self.stack[index] = value;
     }
 
     pub fn interpret_source(&mut self, source: &str) -> Result<()> {
@@ -325,7 +324,7 @@ impl VM {
                         while let OpCode::Upvalue(is_local, index) = self.frame().peek().clone() {
                             self.frame().read_instruction();
                             let upvalue = if is_local {
-                                Upvalue::LocalOpen(index)
+                                Upvalue::LocalOpen(stack_start + index)
                             } else {
                                 let upvalue = self.frame().closure.borrow().as_closure().upvalues[index].clone();
                                 Upvalue::ForeignOpen(upvalue)
