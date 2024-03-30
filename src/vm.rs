@@ -80,7 +80,6 @@ impl VM {
     }
 
     pub fn get_value(&self, index: usize) -> Value {
-        let stack_start = self.frames.last().unwrap().stack_start;
         self.stack[index].clone()
     }
 
@@ -180,6 +179,14 @@ impl VM {
     
     fn frame(&mut self) -> &mut CallFrame {
         self.frames.last_mut().unwrap()
+    }
+
+    fn close_upvalues(&mut self, last: usize) {
+        while self.open_upvalues.len() > 0 && self.open_upvalues.last().unwrap().borrow().index() >= last {
+            let upvalue = self.open_upvalues.pop().unwrap();
+            let value = { upvalue.borrow().get_value(self) };
+            *upvalue.as_ref().borrow_mut() = Upvalue::Closed(value);
+        }
     }
     
     fn run(&mut self) -> Result<()> {
@@ -325,13 +332,16 @@ impl VM {
                         let mut closure = Closure::new(function.clone());
                         while let OpCode::Upvalue(is_local, index) = self.frame().peek().clone() {
                             self.frame().read_instruction();
-                            let upvalue = if is_local {
+                            let upvalue = Rc::new(RefCell::new(if is_local {
                                 Upvalue::LocalOpen(stack_start + index)
                             } else {
                                 let upvalue = self.frame().closure.borrow().as_closure().upvalues[index].clone();
                                 Upvalue::ForeignOpen(upvalue)
-                            };
-                            closure.upvalues.push(Rc::new(RefCell::new(upvalue)));
+                            }));
+                            if upvalue.borrow().is_local() {
+                                self.open_upvalues.push(upvalue.clone());
+                            }
+                            closure.upvalues.push(upvalue);
                         }
                         self.push(Object::Closure(closure).into());
                     } else {
@@ -344,10 +354,12 @@ impl VM {
                     return Err(InterpretError::RuntimeError);
                 }
                 OpCode::CloseUpvalue => {
-                    
+                    self.close_upvalues(self.stack.len() - 1);
+                    self.pop();
                 }
                 OpCode::Return => {
                     let result = self.pop().unwrap();
+                    self.close_upvalues(stack_start);
                     let frame = self.frame();
                     let stack_len = frame.stack_start;
                     self.stack.truncate(stack_len);

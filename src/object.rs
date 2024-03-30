@@ -75,6 +75,17 @@ impl Upvalue {
             Upvalue::Closed(closed) => *closed = value,
         }
     }
+
+    pub fn is_local(&self) -> bool {
+        matches!(self, Upvalue::LocalOpen(_))
+    }
+
+    pub fn index(&self) -> usize {
+        match self {
+            Upvalue::LocalOpen(index) => *index,
+            _ => panic!("Expected local upvalue"),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
