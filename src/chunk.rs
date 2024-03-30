@@ -33,6 +33,7 @@ pub enum OpCode {
     Call(usize),
     Closure(usize),
     Upvalue(bool, usize),
+    CloseUpvalue,
     Return,
 }
 
@@ -82,6 +83,7 @@ impl OpCode {
                 format!("OP_CLOSURE({}:{})", index, value)
             }
             OpCode::Upvalue(is_local, index) => format!("|\tOP_UPVALUE({}:{})", if *is_local { "local" } else { "upvalue" }, index),
+            OpCode::CloseUpvalue => "OP_CLOSE_UPVALUE".to_string(),
             OpCode::Return => "OP_RETURN".to_string(),
         }
     }

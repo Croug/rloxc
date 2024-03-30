@@ -105,6 +105,7 @@ const RULES: [ParseRule; 40] = [
 struct Local {
     name: Token,
     depth: usize,
+    captured: bool,
 }
 
 pub struct Upvalue {
@@ -160,6 +161,7 @@ impl CompileContext {
         let local = parent.resolve_local(&name);
 
         if let Some(local) = local {
+            parent.locals[local].captured = true;
             return Some(self.add_upvalue( local, true))
         }
     
@@ -233,6 +235,7 @@ impl<'a> Compiler<'a> {
         self.context().locals.push(Local {
             name: Token::new(TokenType::Identifier, "".to_string(), 0),
             depth: 0,
+            captured: false,
         });
 
         self.advance();
@@ -667,6 +670,7 @@ impl<'a> Compiler<'a> {
         self.context().locals.push(Local {
             name: Token::new(TokenType::Identifier, "".to_string(), 0),
             depth: 0,
+            captured: false,
         });
     }
 
@@ -704,7 +708,14 @@ impl<'a> Compiler<'a> {
         self.context().scope_depth -= 1;
 
         while self.context().locals.len() > 0 && self.context().locals.last().unwrap().depth > self.context().scope_depth {
-            self.add_instruction(OpCode::Pop);
+            let opcode = if dbg!(self.context().locals.last().unwrap().captured) {
+                OpCode::CloseUpvalue
+            } else {
+                OpCode::Pop
+            };
+
+
+            self.add_instruction(dbg!(opcode));
             self.context().locals.pop();
         }
     }
@@ -713,6 +724,7 @@ impl<'a> Compiler<'a> {
         self.context().locals.push(Local {
             name,
             depth: usize::MAX,
+            captured: false,
         })
     }
 

@@ -62,6 +62,7 @@ pub struct VM {
     frames: Vec<CallFrame>,
     stack: Vec<Value>,
     globals: HashMap<String, Value>,
+    open_upvalues: Vec<Rc<RefCell<Upvalue>>>,
 }
 
 impl VM {
@@ -70,6 +71,7 @@ impl VM {
             frames: Vec::new(),
             stack: Vec::new(),
             globals: HashMap::new(),
+            open_upvalues: Vec::new(),
         };
 
         vm.define_native("clock", natives::clock);
@@ -340,6 +342,9 @@ impl VM {
                 OpCode::Upvalue(_, _) => {
                     runtime_error!(self, "Upvalue declaration only valid immediately following closure or upvalue instruction.");
                     return Err(InterpretError::RuntimeError);
+                }
+                OpCode::CloseUpvalue => {
+                    
                 }
                 OpCode::Return => {
                     let result = self.pop().unwrap();
