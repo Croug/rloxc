@@ -17,6 +17,8 @@ pub enum OpCode {
     DefineGlobal(usize),
     GetUpvalue(usize),
     SetUpvalue(usize),
+    GetProperty(usize),
+    SetProperty(usize),
     Equal,
     Greater,
     Less,
@@ -31,10 +33,13 @@ pub enum OpCode {
     JumpIfFalse(usize),
     Loop(usize),
     Call(usize),
+    Invoke(usize, usize),
     Closure(usize),
     Upvalue(bool, usize),
     CloseUpvalue,
     Return,
+    Class(usize),
+    Method(usize),
 }
 
 impl OpCode {
@@ -64,6 +69,14 @@ impl OpCode {
             }
             OpCode::GetUpvalue(index) => format!("OP_GET_UPVALUE({})", index),
             OpCode::SetUpvalue(index) => format!("OP_SET_UPVALUE({})", index),
+            OpCode::GetProperty(index) => {
+                let value = &chunk.constants[*index];
+                format!("OP_GET_PROPERTY({}:{})", index, value)
+            }
+            OpCode::SetProperty(index) => {
+                let value = &chunk.constants[*index];
+                format!("OP_SET_PROPERTY({}:{})", index, value)
+            }
             OpCode::Equal => "OP_EQUAL".to_string(),
             OpCode::Greater => "OP_GREATER".to_string(),
             OpCode::Less => "OP_LESS".to_string(),
@@ -78,6 +91,10 @@ impl OpCode {
             OpCode::JumpIfFalse(offset) => format!("OP_JUMP_IF_FALSE({})", offset),
             OpCode::Loop(offset) => format!("OP_LOOP({})", offset),
             OpCode::Call(arity) => format!("OP_CALL({})", arity),
+            OpCode::Invoke(name, arity) => {
+                let value = &chunk.constants[*name];
+                format!("OP_INVOKE({}:{}, {})", name, value, arity)
+            }
             OpCode::Closure(index) => {
                 let value = &chunk.constants[*index];
                 format!("OP_CLOSURE({}:{})", index, value)
@@ -85,6 +102,14 @@ impl OpCode {
             OpCode::Upvalue(is_local, index) => format!("|\tOP_UPVALUE({}:{})", if *is_local { "local" } else { "upvalue" }, index),
             OpCode::CloseUpvalue => "OP_CLOSE_UPVALUE".to_string(),
             OpCode::Return => "OP_RETURN".to_string(),
+            OpCode::Class(index) => {
+                let value = &chunk.constants[*index];
+                format!("OP_CLASS({}:{})", index, value)
+            }
+            OpCode::Method(index) => {
+                let value = &chunk.constants[*index];
+                format!("OP_METHOD({}:{})", index, value)
+            }
         }
     }
 }

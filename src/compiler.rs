@@ -64,7 +64,7 @@ const RULES: [ParseRule; 40] = [
     /* LeftBrace    */ ParseRule::new(None, None, Precedence::None),
     /* RightBrace   */ ParseRule::new(None, None, Precedence::None),
     /* Comma        */ ParseRule::new(None, None, Precedence::None),
-    /* Dot          */ ParseRule::new(None, None, Precedence::None),
+    /* Dot          */ ParseRule::new(None, parse_handler!(dot), Precedence::Call),
     /* Minus        */ ParseRule::new(parse_handler!(unary), parse_handler!(binary), Precedence::Term),
     /* Plus         */ ParseRule::new(None, parse_handler!(binary), Precedence::Term),
     /* Semicolon    */ ParseRule::new(None, None, Precedence::None),
@@ -93,7 +93,7 @@ const RULES: [ParseRule; 40] = [
     /* Print        */ ParseRule::new(None, None, Precedence::None),
     /* Return       */ ParseRule::new(None, None, Precedence::None),
     /* Super        */ ParseRule::new(None, None, Precedence::None),
-    /* This         */ ParseRule::new(None, None, Precedence::None),
+    /* This         */ ParseRule::new(parse_handler!(this), None, Precedence::None),
     /* True         */ ParseRule::new(parse_handler!(literal), None, Precedence::None),
     /* Var          */ ParseRule::new(None, None, Precedence::None),
     /* While        */ ParseRule::new(None, None, Precedence::None),
@@ -122,11 +122,19 @@ impl Upvalue {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum FunctionType {
+    Function,
+    Method,
+    Initializer,
+}
+
 struct CompileContext {
     parent: Option<Box<CompileContext>>,
     function: Function,
     locals: Vec<Local>,
     scope_depth: usize,
+    function_type: FunctionType,
 }
 
 impl CompileContext {
@@ -170,8 +178,13 @@ impl CompileContext {
     }
 }
 
+pub struct ClassContext {
+    parent: Option<Box<ClassContext>>,
+}
+
 pub struct Compiler<'a> {
     context: Option<CompileContext>,
+    class: Option<ClassContext>,
     scanner: Scanner<'a>,
     current: Option<Token>,
     previous: Option<Token>,
@@ -185,6 +198,7 @@ impl<'a> Compiler<'a> {
 
         Self {
             context: None,
+            class: None,
             scanner,
             current: None,
             previous: None,
@@ -216,7 +230,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn add_return(&mut self) {
-        self.add_instruction(OpCode::Nil);
+        let opcode = if self.context().function_type == FunctionType::Initializer {
+            OpCode::GetLocal(0)
+        } else {
+            OpCode::Nil
+        };
+        self.add_instruction(opcode);
         self.add_instruction(OpCode::Return);
     }
 
@@ -231,6 +250,7 @@ impl<'a> Compiler<'a> {
             function: Function::new(),
             locals: Vec::new(),
             scope_depth: 0,
+            function_type: FunctionType::Function,
         });
         self.context().locals.push(Local {
             name: Token::new(TokenType::Identifier, "".to_string(), 0),
@@ -282,6 +302,15 @@ impl<'a> Compiler<'a> {
         self.named_variable(name, can_assign);
     }
 
+    fn this(&mut self, _: bool) {
+        if self.class.is_none() {
+            self.error("Cannot use 'this' outside of a class.");
+            return;
+        }
+
+        self.variable(false);
+    }
+
     fn literal(&mut self, _: bool) {
         match self.previous.as_ref().unwrap().token_type() {
             TokenType::False => self.add_instruction(OpCode::False),
@@ -327,6 +356,23 @@ impl<'a> Compiler<'a> {
         self.add_instruction(OpCode::Call(arg_count));
     }
 
+    fn dot(&mut self, can_assign: bool) {
+        self.consume(TokenType::Identifier, "Expect property name after '.'.");
+        let name = self.previous.as_ref().unwrap().clone().lexeme();
+        let name = self.get_chunk().set_constant(Value::String(name));
+
+
+        if can_assign && self.match_token(TokenType::Equal) {
+            self.expression();
+            self.add_instruction(OpCode::SetProperty(name))
+        } else if self.match_token(TokenType::LeftParen) {
+            let arg_count = self.argument_list();
+            self.add_instruction(OpCode::Invoke(name, arg_count));
+        } else {
+            self.add_instruction(OpCode::GetProperty(name));
+        }
+    }
+
     fn unary(&mut self, _: bool) {
         let operator_type = self.previous.as_ref().unwrap().token_type();
 
@@ -361,8 +407,8 @@ impl<'a> Compiler<'a> {
         self.consume(TokenType::RightBrace, "Expect '}' after block.");
     }
 
-    fn function(&mut self) {
-        self.begin_context();
+    fn function(&mut self, function_type: FunctionType) {
+        self.begin_context(function_type);
         self.begin_scope();
 
         self.consume(TokenType::LeftParen, "Expect '(' after function name.");
@@ -390,10 +436,50 @@ impl<'a> Compiler<'a> {
         });
     }
 
+    fn method(&mut self) {
+        self.consume(TokenType::Identifier, "Expect method name.");
+        let name = self.previous.as_ref().unwrap().lexeme().clone();
+        let name = self.get_chunk().set_constant(Value::String(name));
+        
+        let function_type = if self.previous.as_ref().unwrap().lexeme() == "init" {
+            FunctionType::Initializer
+        } else {
+            FunctionType::Method
+        };
+        self.function(function_type);
+        self.add_instruction(OpCode::Method(name));
+    }
+
+    fn class_declaration(&mut self) {
+        self.consume(TokenType::Identifier, "Expect class name.");
+        let name_token = self.previous.as_ref().unwrap().clone();
+        let name = name_token.lexeme().clone();
+        let name = self.get_chunk().set_constant(Value::String(name));
+        self.declare_variable();
+
+        self.add_instruction(OpCode::Class(name));
+        self.define_variable(name);
+
+        let class_context = ClassContext {
+            parent: self.class.take().map(Box::new),
+        };
+        self.class = Some(class_context);
+
+        self.named_variable(name_token, false);
+        self.consume(TokenType::LeftBrace, "Expect '{' before class body.");
+        while !self.check(TokenType::RightBrace) &! self.check(TokenType::EOF) {
+            self.method();
+        }
+        self.consume(TokenType::RightBrace, "Expect '}' after class body.");
+        self.add_instruction(OpCode::Pop);
+
+        self.class = self.class.take().unwrap().parent.map(|parent| *parent);
+    }
+
     fn fun_declaration(&mut self) {
         let global = self.parse_variable("Expect function name.");
         self.mark_initialized();
-        self.function();
+        self.function(FunctionType::Function);
         self.define_variable(global);
     }
 
@@ -411,6 +497,10 @@ impl<'a> Compiler<'a> {
         if self.match_token(TokenType::Semicolon) {
             self.add_return();
         } else {
+            if self.context().function_type == FunctionType::Initializer {
+                self.error("Cannot return a value from an initializer.");
+            }
+
             self.expression();
             self.consume(TokenType::Semicolon, "Expect ';' after return value.");
             self.add_instruction(OpCode::Return);
@@ -535,7 +625,9 @@ impl<'a> Compiler<'a> {
     }
 
     fn declaration(&mut self) {
-        if self.match_token(TokenType::Fun) {
+        if self.match_token(TokenType::Class) {
+            self.class_declaration();
+        } else if self.match_token(TokenType::Fun) {
             self.fun_declaration();
         } else if self.match_token(TokenType::Var) {
             self.var_declaration();
@@ -658,17 +750,23 @@ impl<'a> Compiler<'a> {
         patch_jump!(self, end_jump, JumpIfFalse);
     }
 
-    fn begin_context(&mut self) {
+    fn begin_context(&mut self, function_type: FunctionType) {
         let parent = self.context.take().unwrap();
         self.context = Some(CompileContext {
             parent: Some(Box::new(parent)),
             function: Function::new(),
             locals: Vec::new(),
             scope_depth: 0,
+            function_type,
         });
         self.context().function.name = self.previous.as_ref().unwrap().lexeme().clone();
+        let name = if matches!(function_type, FunctionType::Method | FunctionType::Initializer) {
+            "this".to_string()
+        } else {
+            "".to_string()
+        };
         self.context().locals.push(Local {
-            name: Token::new(TokenType::Identifier, "".to_string(), 0),
+            name: Token::new(TokenType::Identifier, name, 0),
             depth: 0,
             captured: false,
         });

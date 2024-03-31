@@ -1,8 +1,8 @@
 #[allow(unused_imports)] use std::io::{stdout, Write};
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc, result};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, result, sync::mpsc::Receiver};
 
-use crate::{chunk::OpCode, compiler, natives, object::{Closure, Function, NativeFn, Object, Upvalue}, value::Value};
+use crate::{chunk::OpCode, compiler, natives, object::{BoundMethod, Class, Closure, Function, Instance, NativeFn, Object, Upvalue}, value::Value};
 
 #[derive(Debug)]
 pub enum InterpretError {
@@ -157,6 +157,24 @@ impl VM {
     fn call_value(&mut self, callee: Value, arg_count: usize) -> Result<()> {
         if let Value::Object(function) = callee {
             match *function.borrow() {
+                Object::BoundMethod(ref bound) => {
+                    let index = self.stack.len() - arg_count - 1;
+                    self.stack[index] = bound.receiver();
+                    self.call(bound.method(), arg_count)
+                }
+                Object::Class(ref class) => {
+                    let index = self.stack.len() - arg_count - 1;
+                    self.stack[index] = Object::Instance(Instance::new(function.clone())).into();
+
+                    if let Some(initializer) = class.get_method("init") {
+                        return self.call(initializer, arg_count);
+                    } else if arg_count > 0 {
+                        runtime_error!(self, "Expected 0 arguments but got {arg_count}");
+                        return Err(InterpretError::RuntimeError);
+                    }
+
+                    Ok(())
+                }
                 Object::Closure(_) => self.call(function.clone(), arg_count),
                 Object::NativeFunction(ref function) => {
                     let stack_start = self.stack.len() - arg_count;
@@ -174,6 +192,49 @@ impl VM {
         } else {
             runtime_error!(self, "Can only call functions and classes.");
             Err(InterpretError::RuntimeError)
+        }
+    }
+
+    fn invoke(&mut self, name: &str, arg_count: usize) -> Result<()> {
+        let receiver = self.peek_n(arg_count).unwrap().clone();
+        let receiver = receiver.as_object().map(|o| Ok(o)).unwrap_or_else(|| {
+            runtime_error!(self, "Only instances have methods.");
+            Err(InterpretError::RuntimeError)
+        })?;
+
+        if !receiver.borrow().is_instance() {
+            runtime_error!(self, "Only instances have methods.");
+            return Err(InterpretError::RuntimeError);
+        }
+
+        if let Some(value) = receiver.borrow().as_instance().get(name) {
+            self.stack.truncate(self.stack.len() - arg_count - 1);
+            let index = self.stack.len() - arg_count - 1;
+            self.stack[index] = value.clone();
+            return self.call_value(value, arg_count);
+        }
+
+        let method = receiver.borrow().as_instance().get_method(name).clone().map(|m| Ok(m)).unwrap_or_else(|| {
+            runtime_error!(self, "Undefined property '{}'", name);
+            Err(InterpretError::RuntimeError)
+        })?;
+
+        self.call(method, arg_count)
+    }
+
+    fn bind_method(&mut self, instance: Rc<RefCell<Object>>, name: &str) -> bool {
+        if matches!(*instance.borrow(), Object::Instance(_)) {
+            if let Some(method) = instance.borrow().as_instance().get_method(name).clone() {
+                let bound = BoundMethod::new(Value::Object(instance.clone()), method.clone());
+                self.pop();
+                self.push(bound.into());
+                true
+            } else {
+                runtime_error!(self, "Undefined property '{}'", name);
+                false
+            }
+        } else {
+            false
         }
     }
     
@@ -309,6 +370,60 @@ impl VM {
                     let a = self.pop().unwrap();
                     self.push(Value::Bool(a == b));
                 }
+                OpCode::GetProperty(index) => {
+                    let instance = self.peek().unwrap().clone();
+                    let name = self.frame().get_constant(index);
+
+                    let name = if let Value::String(name) = name {
+                        name
+                    } else {
+                        runtime_error!(self, "Property name must be a string.");
+                        return Err(InterpretError::RuntimeError);
+                    };
+
+                    let instance = instance.as_object();
+                    if instance.is_none() &! matches!(*instance.as_ref().unwrap().borrow(), Object::Instance(_)) {
+                        runtime_error!(self, "Only instances have properties.");
+                        return Err(InterpretError::RuntimeError);
+                    };
+
+                    let instance = instance.unwrap();
+
+                    if let Some(value) = instance.clone().borrow().as_instance().get(&name) {
+                        self.pop();
+                        self.push(value);
+                    } else if !self.bind_method(instance, &name) {
+                        runtime_error!(self, "Undefined property '{}'", name);
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::SetProperty(index) => {
+                    let value = self.pop().unwrap();
+                    let instance = self.peek().unwrap().clone();
+                    let name = self.frame().get_constant(index);
+
+                    let name = if let Value::String(name) = name {
+                        name
+                    } else {
+                        runtime_error!(self, "Property name must be a string.");
+                        return Err(InterpretError::RuntimeError);
+                    };
+
+                    let instance = instance.as_object();
+                    if instance.is_none() &! matches!(*instance.as_ref().unwrap().borrow(), Object::Instance(_)) {
+                        runtime_error!(self, "Only instances have fields.");
+                        return Err(InterpretError::RuntimeError);
+                    };
+
+                    let instance = instance.unwrap();
+                    let mut instance = instance.borrow_mut();
+
+                    instance.as_instance_mut().set(&name, value);
+
+                    let value = self.pop().unwrap();
+                    self.pop();
+                    self.push(value);
+                }
                 OpCode::Greater => binary_op!(self, Bool, >),
                 OpCode::Less => binary_op!(self, Bool, <),
                 OpCode::Print => {
@@ -324,7 +439,11 @@ impl VM {
                 OpCode::Loop(offset) => self.frame().ip -= offset,
                 OpCode::Call(arg_count) => {
                     let callee = self.peek_n(arg_count).unwrap().clone();
-                    self.call_value(callee.clone(), arg_count)?;
+                    self.call_value(callee, arg_count)?;
+                }
+                OpCode::Invoke(index, arity) => {
+                    let name = self.frame().get_constant(index);
+                    self.invoke(name.to_string().as_ref(), arity)?;
                 }
                 OpCode::Closure(index) => {
                     let function = self.frame().get_constant(index);
@@ -370,6 +489,33 @@ impl VM {
                     }
 
                     self.push(result);
+                }
+                OpCode::Class(index) => {
+                    let name = self.frame().get_constant(index);
+                    if let Value::String(name) = name {
+                        let class = Class::new(name);
+                        self.push(Object::Class(class).into());
+                    } else {
+                        runtime_error!(self, "Class name must be a string.");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::Method(index) => {
+                    let name = self.frame().get_constant(index);
+                    let name = if let Value::String(name) = name {
+                        name
+                    } else {
+                        runtime_error!(self, "Method name must be a string.");
+                        return Err(InterpretError::RuntimeError);
+                    };
+                    let method = self.peek().unwrap().as_object().unwrap();
+                    if !matches!(*method.borrow(), Object::Closure(_)) {
+                        runtime_error!(self, "Method must be a closure.");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                    let class = self.peek_n(1).unwrap().clone();
+                    class.as_object().unwrap().borrow_mut().as_class_mut().insert_method(name, method.clone());
+                    self.pop();
                 }
             }
         }

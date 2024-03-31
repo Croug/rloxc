@@ -1,4 +1,4 @@
-use std::{borrow::BorrowMut, cell::RefCell, fmt::{Debug, Display}, ops::Deref, rc::Rc};
+use std::{borrow::BorrowMut, cell::RefCell, collections::HashMap, fmt::{Debug, Display}, ops::Deref, rc::Rc};
 
 use crate::{chunk::Chunk, compiler, value::Value, vm::VM};
 
@@ -8,6 +8,9 @@ pub type NativeFn = fn(&mut [Value]) -> Value;
 pub enum Object {
     Closure(Closure),
     NativeFunction(NativeFn),
+    Class(Class),
+    Instance(Instance),
+    BoundMethod(BoundMethod),
 }
 
 impl Display for Object {
@@ -15,6 +18,9 @@ impl Display for Object {
         match self {
             Object::Closure(func) => write!(f, "{}", func),
             Object::NativeFunction(_) => write!(f, "<native fn>"),
+            Object::Class(class) => write!(f, "{} class", class.name()), 
+            Object::Instance(instance) => write!(f, "{} instance", instance.class_name()),
+            Object::BoundMethod(bound) => write!(f, "{}.{}", bound.receiver, bound.method.borrow().as_function().name),
         }
     }
 }
@@ -34,15 +40,29 @@ impl Object {
         }
     }
 
-    pub fn as_closure_mut(&mut self) -> &mut Closure {
+    pub fn is_instance(&self) -> bool {
+        matches!(*self, Object::Instance(_))
+    }
+
+    pub fn as_instance(&self) -> &Instance {
         match self {
-            Object::Closure(closure) => closure,
-            _ => panic!("Expected closure object"),
+            Object::Instance(instance) => instance,
+            _ => panic!("Expected instance object"),
         }
     }
 
-    pub fn is_function(&self) -> bool {
-        matches!(self, Object::Closure(_)) || matches!(self, Object::NativeFunction(_))
+    pub fn as_instance_mut(&mut self) -> &mut Instance {
+        match self {
+            Object::Instance(instance) => instance,
+            _ => panic!("Expected instance object"),
+        }
+    }
+
+    pub fn as_class_mut(&mut self) -> &mut Class {
+        match self {
+            Object::Class(class) => class,
+            _ => panic!("Expected class object"),
+        }
     }
 }
 
@@ -156,5 +176,93 @@ impl Display for Function {
 impl Into<Chunk> for Function {
     fn into(self) -> Chunk {
         self.chunk
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Class {
+    name: String,
+    methods: HashMap<String, Rc<RefCell<Object>>>,
+}
+
+impl Class {
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            methods: HashMap::new(),
+        }
+    }
+
+    pub fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    pub fn insert_method(&mut self, name: String, method: Rc<RefCell<Object>>) {
+        self.methods.insert(name, method);
+    }
+
+    pub fn get_method(&self, name: &str) -> Option<Rc<RefCell<Object>>> {
+        self.methods.get(name).cloned()
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Instance {
+    class: Rc<RefCell<Object>>,
+    fields: HashMap<String, Value>,
+}
+
+impl Instance {
+    pub fn new(class: Rc<RefCell<Object>>) -> Self {
+        assert!(matches!(*class.borrow(), Object::Class(_)));
+        Self {
+            class,
+            fields: HashMap::new(),
+        }
+    }
+
+    pub fn class_name(&self) -> String {
+        match self.class.borrow().deref() {
+            Object::Class(class) => class.name(),
+            _ => panic!("Expected class object"),
+        }
+    }
+
+    pub fn get(&self, name: &str) -> Option<Value> {
+        self.fields.get(name).cloned()
+    }
+
+    pub fn set(&mut self, name: &str, value: Value) {
+        self.fields.insert(name.to_string(), value);
+    }
+
+    pub fn get_method(&self, name: &str) -> Option<Rc<RefCell<Object>>> {
+        match self.class.borrow().deref() {
+            Object::Class(class) => class.methods.get(name).cloned(),
+            _=> unreachable!()
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct BoundMethod {
+    receiver: Value,
+    method: Rc<RefCell<Object>>,
+}
+
+impl BoundMethod {
+    pub fn new(receiver: Value, method: Rc<RefCell<Object>>) -> Object {
+        Object::BoundMethod(Self {
+            receiver,
+            method,
+        })
+    }
+
+    pub fn method(&self) -> Rc<RefCell<Object>> {
+        self.method.clone()
+    }
+
+    pub fn receiver(&self) -> Value {
+        self.receiver.clone()
     }
 }

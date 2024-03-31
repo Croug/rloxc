@@ -1,6 +1,6 @@
 use std::{cell::RefCell, fmt::Display, rc::Rc};
 
-use crate::object::{Function, Object};
+use crate::object::{Class, Function, Object};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -32,6 +32,13 @@ impl Value {
             Value::String(_) => "string",
             Value::Function(_) => "function",
             Value::Object(_) => "object",
+        }
+    }
+
+    pub fn as_object(&self) -> Option<Rc<RefCell<Object>>> {
+        match self {
+            Value::Object(o) => Some(o.clone()),
+            _ => None,
         }
     }
 }
