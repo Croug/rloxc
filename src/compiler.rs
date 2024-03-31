@@ -1,9 +1,16 @@
-use std::{cell::RefCell, mem::discriminant, ops::DerefMut, rc::Rc};
+use std::{mem::discriminant, rc::Rc};
 
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
-use crate::{chunk::{Chunk, OpCode}, object::{Closure, Function, Object}, scanner::Scanner, token::{Token, TokenType}, value::Value, vm::{InterpretError, Result}};
+use crate::{
+    chunk::{Chunk, OpCode},
+    object::Function,
+    scanner::Scanner,
+    token::{Token, TokenType},
+    value::Value,
+    vm::{InterpretError, Result},
+};
 
 #[derive(FromPrimitive, Clone, Copy)]
 pub enum Precedence {
@@ -29,7 +36,11 @@ struct ParseRule {
 }
 
 impl ParseRule {
-    pub const fn new(prefix: Option<ParseFn>, infix: Option<ParseFn>, precedence: Precedence) -> Self {
+    pub const fn new(
+        prefix: Option<ParseFn>,
+        infix: Option<ParseFn>,
+        precedence: Precedence,
+    ) -> Self {
         Self {
             prefix,
             infix,
@@ -45,27 +56,34 @@ impl ParseRule {
 macro_rules! parse_handler {
     ($fun:ident) => {
         Some(|compiler: &mut Compiler<'_>, can_assign: bool| compiler.$fun(can_assign))
-    }
+    };
 }
 
 macro_rules! patch_jump {
-    ($compiler:ident, $offset:expr, $discriminant:ident) => {
-        {
-            let jump = $compiler.get_chunk().code.len() - 1;
-            $compiler.patch_instruction($offset, OpCode::$discriminant(jump - $offset));
-        }
-    }
-    
+    ($compiler:ident, $offset:expr, $discriminant:ident) => {{
+        let jump = $compiler.get_chunk().code.len() - 1;
+        $compiler.patch_instruction($offset, OpCode::$discriminant(jump - $offset));
+    }};
 }
 
 const RULES: [ParseRule; 40] = [
-    /* LeftParen    */ ParseRule::new(parse_handler!(grouping), parse_handler!(call), Precedence::Call),
+    /* LeftParen    */
+    ParseRule::new(
+        parse_handler!(grouping),
+        parse_handler!(call),
+        Precedence::Call,
+    ),
     /* RightParen   */ ParseRule::new(None, None, Precedence::None),
     /* LeftBrace    */ ParseRule::new(None, None, Precedence::None),
     /* RightBrace   */ ParseRule::new(None, None, Precedence::None),
     /* Comma        */ ParseRule::new(None, None, Precedence::None),
     /* Dot          */ ParseRule::new(None, parse_handler!(dot), Precedence::Call),
-    /* Minus        */ ParseRule::new(parse_handler!(unary), parse_handler!(binary), Precedence::Term),
+    /* Minus        */
+    ParseRule::new(
+        parse_handler!(unary),
+        parse_handler!(binary),
+        Precedence::Term,
+    ),
     /* Plus         */ ParseRule::new(None, parse_handler!(binary), Precedence::Term),
     /* Semicolon    */ ParseRule::new(None, None, Precedence::None),
     /* Slash        */ ParseRule::new(None, parse_handler!(binary), Precedence::Factor),
@@ -115,10 +133,7 @@ pub struct Upvalue {
 
 impl Upvalue {
     pub fn new(index: usize, is_local: bool) -> Self {
-        Self {
-            index,
-            is_local,
-        }
+        Self { index, is_local }
     }
 }
 
@@ -158,10 +173,15 @@ impl CompileContext {
     fn add_upvalue(&mut self, index: usize, is_local: bool) -> usize {
         let upvalues = &mut self.function.upvalues;
 
-        upvalues.iter().enumerate().find(|(_, upvalue)| upvalue.index == index && upvalue.is_local == is_local).map(|(i, _)| i).unwrap_or_else(|| {
-            upvalues.push(Upvalue::new(index, is_local));
-            upvalues.len() - 1
-        })
+        upvalues
+            .iter()
+            .enumerate()
+            .find(|(_, upvalue)| upvalue.index == index && upvalue.is_local == is_local)
+            .map(|(i, _)| i)
+            .unwrap_or_else(|| {
+                upvalues.push(Upvalue::new(index, is_local));
+                upvalues.len() - 1
+            })
     }
 
     fn resolve_upvalue(&mut self, name: Token) -> Option<usize> {
@@ -170,11 +190,11 @@ impl CompileContext {
 
         if let Some(local) = local {
             parent.locals[local].captured = true;
-            return Some(self.add_upvalue( local, true))
+            return Some(self.add_upvalue(local, true));
         }
-    
+
         let index = parent.resolve_upvalue(name)?;
-        return Some(self.add_upvalue( index, false));
+        return Some(self.add_upvalue(index, false));
     }
 }
 
@@ -259,7 +279,7 @@ impl<'a> Compiler<'a> {
         });
 
         self.advance();
-        
+
         while !self.match_token(TokenType::EOF) {
             self.declaration();
         }
@@ -282,13 +302,18 @@ impl<'a> Compiler<'a> {
         let context = self.context();
         let (set_op, get_op) = arg
             .map(|arg| (OpCode::SetLocal(arg), OpCode::GetLocal(arg)))
-            .or_else(|| context.resolve_upvalue(name.clone())
-                .map(|index| (OpCode::SetUpvalue(index), OpCode::GetUpvalue(index))))
+            .or_else(|| {
+                context
+                    .resolve_upvalue(name.clone())
+                    .map(|index| (OpCode::SetUpvalue(index), OpCode::GetUpvalue(index)))
+            })
             .unwrap_or_else(|| {
-                let index = self.get_chunk().set_constant(Value::String(name.lexeme().clone()));
+                let index = self
+                    .get_chunk()
+                    .set_constant(Value::String(name.lexeme().clone()));
                 (OpCode::SetGlobal(index), OpCode::GetGlobal(index))
             });
-        
+
         if can_assign && self.match_token(TokenType::Equal) {
             self.expression();
             self.add_instruction(set_op);
@@ -361,7 +386,6 @@ impl<'a> Compiler<'a> {
         let name = self.previous.as_ref().unwrap().clone().lexeme();
         let name = self.get_chunk().set_constant(Value::String(name));
 
-
         if can_assign && self.match_token(TokenType::Equal) {
             self.expression();
             self.add_instruction(OpCode::SetProperty(name))
@@ -428,7 +452,9 @@ impl<'a> Compiler<'a> {
         self.block();
 
         let function = Rc::new(self.end_context());
-        let constant = self.get_chunk().set_constant(Value::Function(function.clone()));
+        let constant = self
+            .get_chunk()
+            .set_constant(Value::Function(function.clone()));
         self.add_instruction(OpCode::Closure(constant));
 
         function.upvalues.iter().for_each(|upvalue| {
@@ -440,7 +466,7 @@ impl<'a> Compiler<'a> {
         self.consume(TokenType::Identifier, "Expect method name.");
         let name = self.previous.as_ref().unwrap().lexeme().clone();
         let name = self.get_chunk().set_constant(Value::String(name));
-        
+
         let function_type = if self.previous.as_ref().unwrap().lexeme() == "init" {
             FunctionType::Initializer
         } else {
@@ -467,7 +493,7 @@ impl<'a> Compiler<'a> {
 
         self.named_variable(name_token, false);
         self.consume(TokenType::LeftBrace, "Expect '{' before class body.");
-        while !self.check(TokenType::RightBrace) &! self.check(TokenType::EOF) {
+        while !self.check(TokenType::RightBrace) & !self.check(TokenType::EOF) {
             self.method();
         }
         self.consume(TokenType::RightBrace, "Expect '}' after class body.");
@@ -531,8 +557,8 @@ impl<'a> Compiler<'a> {
     fn for_statement(&mut self) {
         self.begin_scope();
         self.consume(TokenType::LeftParen, "Expect '(' after 'for'.");
-        if self.match_token(TokenType::Semicolon) {}
-        else if self.match_token(TokenType::Var) {
+        if self.match_token(TokenType::Semicolon) {
+        } else if self.match_token(TokenType::Var) {
             self.var_declaration();
         } else {
             self.expression_statement();
@@ -619,7 +645,10 @@ impl<'a> Compiler<'a> {
         } else {
             self.add_instruction(OpCode::Nil);
         }
-        self.consume(TokenType::Semicolon, "Expect ';' after variable declaration.");
+        self.consume(
+            TokenType::Semicolon,
+            "Expect ';' after variable declaration.",
+        );
 
         self.define_variable(global);
     }
@@ -645,14 +674,14 @@ impl<'a> Compiler<'a> {
 
         while !self.check(TokenType::EOF) {
             match self.previous.as_ref().unwrap().token_type() {
-                TokenType::Class | 
-                TokenType::Fun | 
-                TokenType::Var | 
-                TokenType::For | 
-                TokenType::If | 
-                TokenType::While | 
-                TokenType::Print | 
-                TokenType::Return => return,
+                TokenType::Class
+                | TokenType::Fun
+                | TokenType::Var
+                | TokenType::For
+                | TokenType::If
+                | TokenType::While
+                | TokenType::Print
+                | TokenType::Return => return,
                 _ => (),
             }
             self.advance();
@@ -661,7 +690,8 @@ impl<'a> Compiler<'a> {
 
     fn parse_precedence(&mut self, precedence: Precedence) {
         self.advance();
-        let prefix_rule = match ParseRule::get(self.previous.as_ref().unwrap().token_type()).prefix {
+        let prefix_rule = match ParseRule::get(self.previous.as_ref().unwrap().token_type()).prefix
+        {
             Some(prefix) => prefix,
             None => {
                 self.error("Expect expression.");
@@ -672,9 +702,13 @@ impl<'a> Compiler<'a> {
         let can_assign = precedence as usize <= Precedence::Assignment as usize;
         prefix_rule(self, can_assign);
 
-        while precedence as usize <= ParseRule::get(self.current.as_ref().unwrap().token_type()).precedence as usize {
+        while precedence as usize
+            <= ParseRule::get(self.current.as_ref().unwrap().token_type()).precedence as usize
+        {
             self.advance();
-            if let Some(infix_rule) = ParseRule::get(self.previous.as_ref().unwrap().token_type()).infix {
+            if let Some(infix_rule) =
+                ParseRule::get(self.previous.as_ref().unwrap().token_type()).infix
+            {
                 infix_rule(self, can_assign);
             }
 
@@ -760,7 +794,10 @@ impl<'a> Compiler<'a> {
             function_type,
         });
         self.context().function.name = self.previous.as_ref().unwrap().lexeme().clone();
-        let name = if matches!(function_type, FunctionType::Method | FunctionType::Initializer) {
+        let name = if matches!(
+            function_type,
+            FunctionType::Method | FunctionType::Initializer
+        ) {
             "this".to_string()
         } else {
             "".to_string()
@@ -775,7 +812,8 @@ impl<'a> Compiler<'a> {
     fn end_context(&mut self) -> Function {
         self.add_return();
 
-        #[cfg(debug_print_code)] {
+        #[cfg(debug_print_code)]
+        {
             if !self.had_error {
                 println!("{:?}", self.context().function);
             }
@@ -805,13 +843,14 @@ impl<'a> Compiler<'a> {
     fn end_scope(&mut self) {
         self.context().scope_depth -= 1;
 
-        while self.context().locals.len() > 0 && self.context().locals.last().unwrap().depth > self.context().scope_depth {
+        while self.context().locals.len() > 0
+            && self.context().locals.last().unwrap().depth > self.context().scope_depth
+        {
             let opcode = if dbg!(self.context().locals.last().unwrap().captured) {
                 OpCode::CloseUpvalue
             } else {
                 OpCode::Pop
             };
-
 
             self.add_instruction(dbg!(opcode));
             self.context().locals.pop();

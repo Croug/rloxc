@@ -1,4 +1,10 @@
-use std::{borrow::BorrowMut, cell::RefCell, collections::HashMap, fmt::{Debug, Display}, ops::Deref, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fmt::{Debug, Display},
+    ops::Deref,
+    rc::Rc,
+};
 
 use crate::{chunk::Chunk, compiler, value::Value, vm::VM};
 
@@ -18,9 +24,14 @@ impl Display for Object {
         match self {
             Object::Closure(func) => write!(f, "{}", func),
             Object::NativeFunction(_) => write!(f, "<native fn>"),
-            Object::Class(class) => write!(f, "{} class", class.name()), 
+            Object::Class(class) => write!(f, "{} class", class.name()),
             Object::Instance(instance) => write!(f, "{} instance", instance.class_name()),
-            Object::BoundMethod(bound) => write!(f, "{}.{}", bound.receiver, bound.method.borrow().as_function().name),
+            Object::BoundMethod(bound) => write!(
+                f,
+                "{}.{}",
+                bound.receiver,
+                bound.method.borrow().as_function().name
+            ),
         }
     }
 }
@@ -163,13 +174,30 @@ impl Function {
 
 impl Debug for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "<fn {}>\n{:?}", if self.name.is_empty() { "<script>" } else { &self.name }, self.chunk)
+        write!(
+            f,
+            "<fn {}>\n{:?}",
+            if self.name.is_empty() {
+                "<script>"
+            } else {
+                &self.name
+            },
+            self.chunk
+        )
     }
 }
 
 impl Display for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "<fn {}>", if self.name.is_empty() { "<script>" } else { &self.name })
+        write!(
+            f,
+            "<fn {}>",
+            if self.name.is_empty() {
+                "<script>"
+            } else {
+                &self.name
+            }
+        )
     }
 }
 
@@ -239,7 +267,7 @@ impl Instance {
     pub fn get_method(&self, name: &str) -> Option<Rc<RefCell<Object>>> {
         match self.class.borrow().deref() {
             Object::Class(class) => class.methods.get(name).cloned(),
-            _=> unreachable!()
+            _ => unreachable!(),
         }
     }
 }
@@ -252,10 +280,7 @@ pub struct BoundMethod {
 
 impl BoundMethod {
     pub fn new(receiver: Value, method: Rc<RefCell<Object>>) -> Object {
-        Object::BoundMethod(Self {
-            receiver,
-            method,
-        })
+        Object::BoundMethod(Self { receiver, method })
     }
 
     pub fn method(&self) -> Rc<RefCell<Object>> {

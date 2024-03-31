@@ -8,7 +8,7 @@ pub struct Scanner<'a> {
     start: usize,
     current: usize,
     line: usize,
-    reserved_words: Map<Vec<u8>>
+    reserved_words: Map<Vec<u8>>,
 }
 
 impl<'a> Scanner<'a> {
@@ -37,7 +37,7 @@ impl<'a> Scanner<'a> {
             start: 0,
             current: 0,
             line: 1,
-            reserved_words: Map::new(buffer).unwrap()
+            reserved_words: Map::new(buffer).unwrap(),
         }
     }
 
@@ -50,7 +50,7 @@ impl<'a> Scanner<'a> {
         }
 
         self.advance();
-        
+
         true
     }
 
@@ -87,14 +87,12 @@ impl<'a> Scanner<'a> {
             '"' => self.string(),
             c if c.is_numeric() => self.number(),
             c if c.is_alphabetic() => self.identifier(),
-            _ => Token::error(self.line, format!("Unexpected character '{c}'").to_owned())
+            _ => Token::error(self.line, format!("Unexpected character '{c}'").to_owned()),
         }
     }
 
     fn identifier(&mut self) -> Token {
-        while self.peek().is_alphanumeric()
-        || self.peek() == '_'
-        || self.peek() == '-'{
+        while self.peek().is_alphanumeric() || self.peek() == '_' || self.peek() == '-' {
             self.advance();
         }
 
@@ -102,7 +100,7 @@ impl<'a> Scanner<'a> {
 
         let token_type = match self.reserved_words.get(slice.as_bytes()) {
             Some(token_type) => FromPrimitive::from_u64(token_type).unwrap(),
-            None => TokenType::Identifier
+            None => TokenType::Identifier,
         };
 
         self.make_token(token_type)
@@ -133,7 +131,7 @@ impl<'a> Scanner<'a> {
         }
 
         if !self.more_tokens() {
-            return Token::error(self.line, "Unterminated string.".to_owned())
+            return Token::error(self.line, "Unterminated string.".to_owned());
         }
 
         self.advance();
@@ -145,13 +143,18 @@ impl<'a> Scanner<'a> {
         loop {
             let c = self.peek();
             match c {
-                ' ' | '\r' | '\t' => { self.advance(); },
-                '\n' => { self.line += 1; self.advance(); },
+                ' ' | '\r' | '\t' => {
+                    self.advance();
+                }
+                '\n' => {
+                    self.line += 1;
+                    self.advance();
+                }
                 '/' if self.peek_next() == '/' => {
                     while self.peek() != '\n' && self.more_tokens() {
                         self.advance();
                     }
-                },
+                }
                 _ => return,
             }
         }
@@ -177,7 +180,12 @@ impl<'a> Scanner<'a> {
     }
 
     fn make_token(&mut self, token_type: TokenType) -> Token {
-        let lexeme = self.source.chars().skip(self.start).take(self.current - self.start).collect();
+        let lexeme = self
+            .source
+            .chars()
+            .skip(self.start)
+            .take(self.current - self.start)
+            .collect();
         Token::new(token_type, lexeme, self.line)
     }
 

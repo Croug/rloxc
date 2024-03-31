@@ -1,8 +1,14 @@
-#[allow(unused_imports)] use std::io::{stdout, Write};
+#[allow(unused_imports)]
+use std::io::{stdout, Write};
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc, result, sync::mpsc::Receiver};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, result};
 
-use crate::{chunk::OpCode, compiler, natives, object::{BoundMethod, Class, Closure, Function, Instance, NativeFn, Object, Upvalue}, value::Value};
+use crate::{
+    chunk::OpCode,
+    compiler, natives,
+    object::{BoundMethod, Class, Closure, Function, Instance, NativeFn, Object, Upvalue},
+    value::Value,
+};
 
 #[derive(Debug)]
 pub enum InterpretError {
@@ -54,7 +60,12 @@ impl CallFrame {
     }
 
     fn get_constant(&mut self, index: usize) -> Value {
-        self.closure.borrow().as_function().get_chunk().get_constant(index).clone()
+        self.closure
+            .borrow()
+            .as_function()
+            .get_chunk()
+            .get_constant(index)
+            .clone()
     }
 }
 
@@ -93,7 +104,9 @@ impl VM {
 
     pub fn interpret_chunk(&mut self, function: Function) -> Result<()> {
         let frame = CallFrame {
-            closure: Rc::new(RefCell::new(Object::Closure(Closure::new(Rc::new(function))))),
+            closure: Rc::new(RefCell::new(Object::Closure(Closure::new(Rc::new(
+                function,
+            ))))),
             ip: 0,
             stack_start: self.stack.len(),
         };
@@ -104,22 +117,31 @@ impl VM {
 
         self.run()
     }
-    
+
     fn _error(&mut self) {
         for frame in self.frames.iter().rev() {
             let function = frame.closure.borrow();
             let function = function.as_function();
-            
-            eprintln!("[line {}] in {}", function.get_chunk().line(frame.ip - 1), if function.name.is_empty() { "script".to_owned() } else { function.name.to_owned() + "()" });
+
+            eprintln!(
+                "[line {}] in {}",
+                function.get_chunk().line(frame.ip - 1),
+                if function.name.is_empty() {
+                    "script".to_owned()
+                } else {
+                    function.name.to_owned() + "()"
+                }
+            );
         }
         self.stack.clear();
         self.frames.clear();
     }
 
     pub fn define_native(&mut self, name: &str, function: NativeFn) {
-        self.globals.insert(name.to_owned(), Object::NativeFunction(function).into());
+        self.globals
+            .insert(name.to_owned(), Object::NativeFunction(function).into());
     }
-    
+
     fn push(&mut self, value: Value) {
         self.stack.push(value);
     }
@@ -127,15 +149,15 @@ impl VM {
     fn pop(&mut self) -> Option<Value> {
         self.stack.pop()
     }
-    
+
     fn peek(&mut self) -> Option<&Value> {
         self.stack.last()
     }
-    
+
     fn peek_n(&mut self, n: usize) -> Option<&Value> {
         self.stack.get(self.stack.len() - n - 1)
     }
-    
+
     fn call(&mut self, function: Rc<RefCell<Object>>, arg_count: usize) -> Result<()> {
         let arity = function.borrow().as_function().arity;
         if arg_count != arity {
@@ -214,10 +236,16 @@ impl VM {
             return self.call_value(value, arg_count);
         }
 
-        let method = receiver.borrow().as_instance().get_method(name).clone().map(|m| Ok(m)).unwrap_or_else(|| {
-            runtime_error!(self, "Undefined property '{}'", name);
-            Err(InterpretError::RuntimeError)
-        })?;
+        let method = receiver
+            .borrow()
+            .as_instance()
+            .get_method(name)
+            .clone()
+            .map(|m| Ok(m))
+            .unwrap_or_else(|| {
+                runtime_error!(self, "Undefined property '{}'", name);
+                Err(InterpretError::RuntimeError)
+            })?;
 
         self.call(method, arg_count)
     }
@@ -237,25 +265,28 @@ impl VM {
             false
         }
     }
-    
+
     fn frame(&mut self) -> &mut CallFrame {
         self.frames.last_mut().unwrap()
     }
 
     fn close_upvalues(&mut self, last: usize) {
-        while self.open_upvalues.len() > 0 && self.open_upvalues.last().unwrap().borrow().index() >= last {
+        while self.open_upvalues.len() > 0
+            && self.open_upvalues.last().unwrap().borrow().index() >= last
+        {
             let upvalue = self.open_upvalues.pop().unwrap();
             let value = { upvalue.borrow().get_value(self) };
             *upvalue.as_ref().borrow_mut() = Upvalue::Closed(value);
         }
     }
-    
+
     fn run(&mut self) -> Result<()> {
         loop {
             let instruction = self.frame().read_instruction();
             let stack_start = self.frame().stack_start;
 
-            #[cfg(debug_trace_execution)] {
+            #[cfg(debug_trace_execution)]
+            {
                 print!("\t");
                 for value in &self.stack {
                     print!("[ {} ]", value);
@@ -263,7 +294,8 @@ impl VM {
                 println!();
                 stdout().flush().unwrap();
                 let ip = self.frame().ip - 1;
-                let instruction = instruction.to_string_resolved(self.frame().closure.borrow().as_function().get_chunk());
+                let instruction = instruction
+                    .to_string_resolved(self.frame().closure.borrow().as_function().get_chunk());
                 let function = self.frame().closure.borrow().to_string();
                 println!("({function}:{ip}){instruction}");
             }
@@ -278,11 +310,16 @@ impl VM {
                         (a, Value::String(b)) => self.push(Value::String(a.to_string() + &b)),
                         (Value::Number(a), Value::Number(b)) => self.push(Value::Number(a + b)),
                         (a, b) => {
-                            runtime_error!(self, "Add operation not valid on types '{}' and '{}'", a.type_name(), b.type_name());
+                            runtime_error!(
+                                self,
+                                "Add operation not valid on types '{}' and '{}'",
+                                a.type_name(),
+                                b.type_name()
+                            );
                             return Err(InterpretError::RuntimeError);
                         }
                     }
-                },
+                }
                 OpCode::Subtract => binary_op!(self, Number, -),
                 OpCode::Multiply => binary_op!(self, Number, *),
                 OpCode::Divide => binary_op!(self, Number, /),
@@ -306,7 +343,9 @@ impl VM {
                 OpCode::Nil => self.push(Value::Nil),
                 OpCode::True => self.push(Value::Bool(true)),
                 OpCode::False => self.push(Value::Bool(false)),
-                OpCode::Pop => { self.pop(); }
+                OpCode::Pop => {
+                    self.pop();
+                }
                 OpCode::GetLocal(index) => {
                     let value = self.stack[stack_start + index].clone();
                     self.push(value);
@@ -343,7 +382,6 @@ impl VM {
                         runtime_error!(self, "Global name must be a string.");
                         return Err(InterpretError::RuntimeError);
                     }
-                
                 }
                 OpCode::DefineGlobal(index) => {
                     let name = self.frame().get_constant(index);
@@ -356,12 +394,14 @@ impl VM {
                     }
                 }
                 OpCode::GetUpvalue(index) => {
-                    let upvalue = self.frame().closure.borrow().as_closure().upvalues[index].clone();
+                    let upvalue =
+                        self.frame().closure.borrow().as_closure().upvalues[index].clone();
                     let value = upvalue.borrow().get_value(self);
                     self.push(value);
                 }
                 OpCode::SetUpvalue(index) => {
-                    let upvalue = self.frame().closure.borrow().as_closure().upvalues[index].clone();
+                    let upvalue =
+                        self.frame().closure.borrow().as_closure().upvalues[index].clone();
                     let value = self.peek().unwrap().clone();
                     upvalue.borrow_mut().set_value(self, value);
                 }
@@ -382,7 +422,9 @@ impl VM {
                     };
 
                     let instance = instance.as_object();
-                    if instance.is_none() &! matches!(*instance.as_ref().unwrap().borrow(), Object::Instance(_)) {
+                    if instance.is_none()
+                        & !matches!(*instance.as_ref().unwrap().borrow(), Object::Instance(_))
+                    {
                         runtime_error!(self, "Only instances have properties.");
                         return Err(InterpretError::RuntimeError);
                     };
@@ -410,7 +452,9 @@ impl VM {
                     };
 
                     let instance = instance.as_object();
-                    if instance.is_none() &! matches!(*instance.as_ref().unwrap().borrow(), Object::Instance(_)) {
+                    if instance.is_none()
+                        & !matches!(*instance.as_ref().unwrap().borrow(), Object::Instance(_))
+                    {
                         runtime_error!(self, "Only instances have fields.");
                         return Err(InterpretError::RuntimeError);
                     };
@@ -454,7 +498,9 @@ impl VM {
                             let upvalue = Rc::new(RefCell::new(if is_local {
                                 Upvalue::LocalOpen(stack_start + index)
                             } else {
-                                let upvalue = self.frame().closure.borrow().as_closure().upvalues[index].clone();
+                                let upvalue = self.frame().closure.borrow().as_closure().upvalues
+                                    [index]
+                                    .clone();
                                 Upvalue::ForeignOpen(upvalue)
                             }));
                             if upvalue.borrow().is_local() {
@@ -514,7 +560,12 @@ impl VM {
                         return Err(InterpretError::RuntimeError);
                     }
                     let class = self.peek_n(1).unwrap().clone();
-                    class.as_object().unwrap().borrow_mut().as_class_mut().insert_method(name, method.clone());
+                    class
+                        .as_object()
+                        .unwrap()
+                        .borrow_mut()
+                        .as_class_mut()
+                        .insert_method(name, method.clone());
                     self.pop();
                 }
             }

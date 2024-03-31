@@ -1,6 +1,6 @@
 use std::{cell::RefCell, fmt::Display, rc::Rc};
 
-use crate::object::{Class, Function, Object};
+use crate::object::{Function, Object};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {

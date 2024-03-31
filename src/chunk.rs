@@ -99,7 +99,11 @@ impl OpCode {
                 let value = &chunk.constants[*index];
                 format!("OP_CLOSURE({}:{})", index, value)
             }
-            OpCode::Upvalue(is_local, index) => format!("|\tOP_UPVALUE({}:{})", if *is_local { "local" } else { "upvalue" }, index),
+            OpCode::Upvalue(is_local, index) => format!(
+                "|\tOP_UPVALUE({}:{})",
+                if *is_local { "local" } else { "upvalue" },
+                index
+            ),
             OpCode::CloseUpvalue => "OP_CLOSE_UPVALUE".to_string(),
             OpCode::Return => "OP_RETURN".to_string(),
             OpCode::Class(index) => {
@@ -134,7 +138,13 @@ impl Debug for Chunk {
                 format!("{line:0>5}")
             };
             last_line = line;
-            writeln!(f, "{i:0>4} {line} {op}", i = i, op = op.to_string_resolved(&self), line = line_text)?;
+            writeln!(
+                f,
+                "{i:0>4} {line} {op}",
+                i = i,
+                op = op.to_string_resolved(&self),
+                line = line_text
+            )?;
         }
 
         writeln!(f, "{txt:=^30}", txt = " END CHUNK ")

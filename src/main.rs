@@ -1,16 +1,18 @@
 use clap::Parser;
-use object::NativeFn;
+use std::{
+    io::{Read, Write},
+    path::PathBuf,
+};
 use value::Value;
-use std::{io::{Read, Write}, path::PathBuf, sync::mpsc};
 
 mod chunk;
-mod vm;
 mod compiler;
+mod natives;
+mod object;
 mod scanner;
 mod token;
 mod value;
-mod object;
-mod natives;
+mod vm;
 
 #[derive(Parser)]
 struct Cli {
