@@ -250,18 +250,14 @@ impl VM {
         self.call(method, arg_count)
     }
 
-    fn bind_method(&mut self, instance: Rc<RefCell<Object>>, name: &str) -> bool {
-        if matches!(*instance.borrow(), Object::Instance(_)) {
-            if let Some(method) = instance.borrow().as_instance().get_method(name).clone() {
-                let bound = BoundMethod::new(Value::Object(instance.clone()), method.clone());
-                self.pop();
-                self.push(bound.into());
-                true
-            } else {
-                runtime_error!(self, "Undefined property '{}'", name);
-                false
-            }
+    fn bind_method(&mut self, class: &Class, name: &str) -> bool {
+        if let Some(method) = class.get_method(name).clone() {
+            let bound = BoundMethod::new(self.peek().unwrap().clone(), method.clone());
+            self.pop();
+            self.push(bound.into());
+            true
         } else {
+            runtime_error!(self, "Undefined property '{}'", name);
             false
         }
     }
@@ -430,11 +426,14 @@ impl VM {
                     };
 
                     let instance = instance.unwrap();
+                    let class = instance.borrow().as_instance().class().clone();
+                    let class = class.borrow();
+                    let class = class.as_class();
 
                     if let Some(value) = instance.clone().borrow().as_instance().get(&name) {
                         self.pop();
                         self.push(value);
-                    } else if !self.bind_method(instance, &name) {
+                    } else if !self.bind_method(class, &name) {
                         runtime_error!(self, "Undefined property '{}'", name);
                         return Err(InterpretError::RuntimeError);
                     }
@@ -467,6 +466,19 @@ impl VM {
                     let value = self.pop().unwrap();
                     self.pop();
                     self.push(value);
+                }
+                OpCode::GetSuper(index) => {
+                    let name = self.frame().get_constant(index);
+                    let name = name.to_string();
+
+                    let superclass = self.pop().unwrap();
+                    let superclass = superclass.as_object().unwrap();
+                    let superclass = superclass.borrow();
+                    let superclass = superclass.as_class();
+
+                     if !self.bind_method(superclass, &name) {
+                        return Err(InterpretError::RuntimeError);
+                     }
                 }
                 OpCode::Greater => binary_op!(self, Bool, >),
                 OpCode::Less => binary_op!(self, Bool, <),
@@ -545,6 +557,32 @@ impl VM {
                         runtime_error!(self, "Class name must be a string.");
                         return Err(InterpretError::RuntimeError);
                     }
+                }
+                OpCode::Inherit => {
+                    let superclass = self.peek_n(1).unwrap().clone();
+                    let subclass = self.peek().unwrap().clone();
+
+                    let superclass = superclass.as_object().clone().map(|o| Ok(o)).unwrap_or_else(|| {
+                        runtime_error!(self, "Superclass must be a class.");
+                        Err(InterpretError::RuntimeError)
+                    })?;
+                    let subclass = subclass.as_object().clone().unwrap();
+
+                    let mut superclass = superclass.borrow_mut();
+                    let mut subclass = subclass.borrow_mut();
+
+                    let superclass = if matches!(*superclass, Object::Class(_)) {
+                        superclass.as_class_mut()
+                    } else {
+                        runtime_error!(self, "Superclass must be a class.");
+                        return Err(InterpretError::RuntimeError);
+                    };
+
+                    let subclass = subclass.as_class_mut();
+
+                    subclass.methods().extend(superclass.methods().iter().map(|(k, v)| (k.clone(), v.clone())));
+
+                    self.pop();
                 }
                 OpCode::Method(index) => {
                     let name = self.frame().get_constant(index);

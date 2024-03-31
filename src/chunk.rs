@@ -19,6 +19,7 @@ pub enum OpCode {
     SetUpvalue(usize),
     GetProperty(usize),
     SetProperty(usize),
+    GetSuper(usize),
     Equal,
     Greater,
     Less,
@@ -39,6 +40,7 @@ pub enum OpCode {
     CloseUpvalue,
     Return,
     Class(usize),
+    Inherit,
     Method(usize),
 }
 
@@ -77,6 +79,10 @@ impl OpCode {
                 let value = &chunk.constants[*index];
                 format!("OP_SET_PROPERTY({}:{})", index, value)
             }
+            OpCode::GetSuper(index) => {
+                let value = &chunk.constants[*index];
+                format!("OP_GET_SUPER({}:{})", index, value)
+            }
             OpCode::Equal => "OP_EQUAL".to_string(),
             OpCode::Greater => "OP_GREATER".to_string(),
             OpCode::Less => "OP_LESS".to_string(),
@@ -110,6 +116,7 @@ impl OpCode {
                 let value = &chunk.constants[*index];
                 format!("OP_CLASS({}:{})", index, value)
             }
+            OpCode::Inherit => "OP_INHERIT".to_string(),
             OpCode::Method(index) => {
                 let value = &chunk.constants[*index];
                 format!("OP_METHOD({}:{})", index, value)

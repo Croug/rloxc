@@ -69,6 +69,13 @@ impl Object {
         }
     }
 
+    pub fn as_class(&self) -> &Class {
+        match self {
+            Object::Class(class) => class,
+            _ => panic!("Expected class object"),
+        }
+    }
+
     pub fn as_class_mut(&mut self) -> &mut Class {
         match self {
             Object::Class(class) => class,
@@ -225,6 +232,10 @@ impl Class {
         self.name.clone()
     }
 
+    pub fn methods(&mut self) -> &mut HashMap<String, Rc<RefCell<Object>>> {
+        &mut self.methods
+    }
+
     pub fn insert_method(&mut self, name: String, method: Rc<RefCell<Object>>) {
         self.methods.insert(name, method);
     }
@@ -247,6 +258,10 @@ impl Instance {
             class,
             fields: HashMap::new(),
         }
+    }
+
+    pub fn class(&self) -> Rc<RefCell<Object>> {
+        self.class.clone()
     }
 
     pub fn class_name(&self) -> String {

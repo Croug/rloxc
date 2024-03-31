@@ -110,7 +110,7 @@ const RULES: [ParseRule; 40] = [
     /* Or           */ ParseRule::new(None, parse_handler!(or), Precedence::None),
     /* Print        */ ParseRule::new(None, None, Precedence::None),
     /* Return       */ ParseRule::new(None, None, Precedence::None),
-    /* Super        */ ParseRule::new(None, None, Precedence::None),
+    /* Super        */ ParseRule::new(parse_handler!(super_), None, Precedence::None),
     /* This         */ ParseRule::new(parse_handler!(this), None, Precedence::None),
     /* True         */ ParseRule::new(parse_handler!(literal), None, Precedence::None),
     /* Var          */ ParseRule::new(None, None, Precedence::None),
@@ -200,6 +200,7 @@ impl CompileContext {
 
 pub struct ClassContext {
     parent: Option<Box<ClassContext>>,
+    has_superclass: bool,
 }
 
 pub struct Compiler<'a> {
@@ -325,6 +326,23 @@ impl<'a> Compiler<'a> {
     fn variable(&mut self, can_assign: bool) {
         let name = self.previous.as_ref().unwrap().clone();
         self.named_variable(name, can_assign);
+    }
+
+    fn super_(&mut self, _: bool) {
+        if self.class.is_none() {
+            self.error("Cannot use 'super' outside of a class.");
+        } else if !self.class.as_ref().unwrap().has_superclass {
+            self.error("Cannot use 'super' in a class with no superclass.");
+        }
+
+        self.consume(TokenType::Dot, "Expect '.' after 'super'.");
+        self.consume(TokenType::Identifier, "Expect superclass method name.");
+        let name = self.previous.as_ref().unwrap().clone().lexeme();
+        let name = self.get_chunk().set_constant(Value::String(name));
+
+        self.named_variable(Token::new(TokenType::Identifier, "this".to_owned(), 0), false);
+        self.named_variable(Token::new(TokenType::Identifier, "super".to_owned(), 0), false);
+        self.add_instruction(OpCode::GetSuper(name));
     }
 
     fn this(&mut self, _: bool) {
@@ -488,8 +506,27 @@ impl<'a> Compiler<'a> {
 
         let class_context = ClassContext {
             parent: self.class.take().map(Box::new),
+            has_superclass: false,
         };
         self.class = Some(class_context);
+
+        if self.match_token(TokenType::Less) {
+            self.consume(TokenType::Identifier, "Expect superclass name.");
+            self.variable(false);
+
+            let last = self.previous.clone().unwrap().lexeme();
+            if name_token.lexeme() == last {
+                self.error("A class cannot inherit from itself.");
+            }
+
+            self.begin_scope();
+            self.add_local(Token::new(TokenType::Identifier, "super".to_string(), 0));
+            self.define_variable(0);
+
+            self.named_variable(name_token.clone(), false);
+            self.add_instruction(OpCode::Inherit);
+            self.class.as_mut().unwrap().has_superclass = true;
+        }
 
         self.named_variable(name_token, false);
         self.consume(TokenType::LeftBrace, "Expect '{' before class body.");
@@ -498,6 +535,10 @@ impl<'a> Compiler<'a> {
         }
         self.consume(TokenType::RightBrace, "Expect '}' after class body.");
         self.add_instruction(OpCode::Pop);
+
+        if self.class.as_ref().unwrap().has_superclass {
+            self.end_scope();
+        }
 
         self.class = self.class.take().unwrap().parent.map(|parent| *parent);
     }
@@ -846,13 +887,13 @@ impl<'a> Compiler<'a> {
         while self.context().locals.len() > 0
             && self.context().locals.last().unwrap().depth > self.context().scope_depth
         {
-            let opcode = if dbg!(self.context().locals.last().unwrap().captured) {
+            let opcode = if self.context().locals.last().unwrap().captured {
                 OpCode::CloseUpvalue
             } else {
                 OpCode::Pop
             };
 
-            self.add_instruction(dbg!(opcode));
+            self.add_instruction(opcode);
             self.context().locals.pop();
         }
     }
