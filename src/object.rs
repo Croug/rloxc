@@ -278,13 +278,6 @@ impl Instance {
     pub fn set(&mut self, name: &str, value: Value) {
         self.fields.insert(name.to_string(), value);
     }
-
-    pub fn get_method(&self, name: &str) -> Option<Rc<RefCell<Object>>> {
-        match self.class.borrow().deref() {
-            Object::Class(class) => class.methods.get(name).cloned(),
-            _ => unreachable!(),
-        }
-    }
 }
 
 #[derive(Debug, PartialEq)]

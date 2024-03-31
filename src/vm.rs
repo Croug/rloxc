@@ -479,9 +479,9 @@ impl VM {
                     let superclass = superclass.borrow();
                     let superclass = superclass.as_class();
 
-                     if !self.bind_method(superclass, &name) {
+                    if !self.bind_method(superclass, &name) {
                         return Err(InterpretError::RuntimeError);
-                     }
+                    }
                 }
                 OpCode::Greater => binary_op!(self, Bool, >),
                 OpCode::Less => binary_op!(self, Bool, <),
@@ -576,10 +576,14 @@ impl VM {
                     let superclass = self.peek_n(1).unwrap().clone();
                     let subclass = self.peek().unwrap().clone();
 
-                    let superclass = superclass.as_object().clone().map(|o| Ok(o)).unwrap_or_else(|| {
-                        runtime_error!(self, "Superclass must be a class.");
-                        Err(InterpretError::RuntimeError)
-                    })?;
+                    let superclass = superclass
+                        .as_object()
+                        .clone()
+                        .map(|o| Ok(o))
+                        .unwrap_or_else(|| {
+                            runtime_error!(self, "Superclass must be a class.");
+                            Err(InterpretError::RuntimeError)
+                        })?;
                     let subclass = subclass.as_object().clone().unwrap();
 
                     let mut superclass = superclass.borrow_mut();
@@ -594,7 +598,12 @@ impl VM {
 
                     let subclass = subclass.as_class_mut();
 
-                    subclass.methods().extend(superclass.methods().iter().map(|(k, v)| (k.clone(), v.clone())));
+                    subclass.methods().extend(
+                        superclass
+                            .methods()
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone())),
+                    );
 
                     self.pop();
                 }
