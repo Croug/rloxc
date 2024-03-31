@@ -35,6 +35,7 @@ pub enum OpCode {
     Loop(usize),
     Call(usize),
     Invoke(usize, usize),
+    SuperInvoke(usize, usize),
     Closure(usize),
     Upvalue(bool, usize),
     CloseUpvalue,
@@ -100,6 +101,10 @@ impl OpCode {
             OpCode::Invoke(name, arity) => {
                 let value = &chunk.constants[*name];
                 format!("OP_INVOKE({}:{}, {})", name, value, arity)
+            }
+            OpCode::SuperInvoke(name, arity) => {
+                let value = &chunk.constants[*name];
+                format!("OP_SUPER_INVOKE({}:{}, {})", name, value, arity)
             }
             OpCode::Closure(index) => {
                 let value = &chunk.constants[*index];

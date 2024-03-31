@@ -217,6 +217,17 @@ impl VM {
         }
     }
 
+    fn invoke_from_class(&mut self, class: &Class, name: &str, arg_count: usize) -> Result<()> {
+        let method = if let Some(method) = class.get_method(name) {
+            method
+        } else {
+            runtime_error!(self, "Undefined property '{}'", name);
+            return Err(InterpretError::RuntimeError);
+        };
+
+        self.call(method, arg_count)
+    }
+
     fn invoke(&mut self, name: &str, arg_count: usize) -> Result<()> {
         let receiver = self.peek_n(arg_count).unwrap().clone();
         let receiver = receiver.as_object().map(|o| Ok(o)).unwrap_or_else(|| {
@@ -236,18 +247,10 @@ impl VM {
             return self.call_value(value, arg_count);
         }
 
-        let method = receiver
-            .borrow()
-            .as_instance()
-            .get_method(name)
-            .clone()
-            .map(|m| Ok(m))
-            .unwrap_or_else(|| {
-                runtime_error!(self, "Undefined property '{}'", name);
-                Err(InterpretError::RuntimeError)
-            })?;
-
-        self.call(method, arg_count)
+        let class = receiver.borrow().as_instance().class().clone();
+        let class = class.borrow();
+        let class = class.as_class();
+        self.invoke_from_class(class, name, arg_count)
     }
 
     fn bind_method(&mut self, class: &Class, name: &str) -> bool {
@@ -500,6 +503,17 @@ impl VM {
                 OpCode::Invoke(index, arity) => {
                     let name = self.frame().get_constant(index);
                     self.invoke(name.to_string().as_ref(), arity)?;
+                }
+                OpCode::SuperInvoke(index, arg_count) => {
+                    let name = self.frame().get_constant(index);
+                    let name = name.to_string();
+
+                    let superclass = self.pop().unwrap();
+                    let superclass = superclass.as_object().unwrap();
+                    let superclass = superclass.borrow();
+                    let superclass = superclass.as_class();
+
+                    self.invoke_from_class(superclass, &name, arg_count)?;
                 }
                 OpCode::Closure(index) => {
                     let function = self.frame().get_constant(index);

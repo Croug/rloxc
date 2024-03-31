@@ -274,7 +274,7 @@ impl<'a> Compiler<'a> {
             function_type: FunctionType::Function,
         });
         self.context().locals.push(Local {
-            name: Token::new(TokenType::Identifier, "".to_string(), 0),
+            name: Self::synthetic_token(""),
             depth: 0,
             captured: false,
         });
@@ -328,6 +328,10 @@ impl<'a> Compiler<'a> {
         self.named_variable(name, can_assign);
     }
 
+    fn synthetic_token(identifier: &str) -> Token {
+        Token::new(TokenType::Identifier, identifier.to_string(), 0)
+    }
+
     fn super_(&mut self, _: bool) {
         if self.class.is_none() {
             self.error("Cannot use 'super' outside of a class.");
@@ -340,9 +344,15 @@ impl<'a> Compiler<'a> {
         let name = self.previous.as_ref().unwrap().clone().lexeme();
         let name = self.get_chunk().set_constant(Value::String(name));
 
-        self.named_variable(Token::new(TokenType::Identifier, "this".to_owned(), 0), false);
-        self.named_variable(Token::new(TokenType::Identifier, "super".to_owned(), 0), false);
-        self.add_instruction(OpCode::GetSuper(name));
+        self.named_variable(Self::synthetic_token("this"), false);
+        if self.match_token(TokenType::LeftParen) {
+            let arg_count = self.argument_list();
+            self.named_variable(Self::synthetic_token("super"), false);
+            self.add_instruction(OpCode::SuperInvoke(name, arg_count));
+        } else {
+            self.named_variable(Self::synthetic_token("super"), false);
+            self.add_instruction(OpCode::GetSuper(name));
+        }
     }
 
     fn this(&mut self, _: bool) {
@@ -520,7 +530,7 @@ impl<'a> Compiler<'a> {
             }
 
             self.begin_scope();
-            self.add_local(Token::new(TokenType::Identifier, "super".to_string(), 0));
+            self.add_local(Self::synthetic_token("super"));
             self.define_variable(0);
 
             self.named_variable(name_token.clone(), false);
@@ -839,12 +849,12 @@ impl<'a> Compiler<'a> {
             function_type,
             FunctionType::Method | FunctionType::Initializer
         ) {
-            "this".to_string()
+            "this"
         } else {
-            "".to_string()
+            ""
         };
         self.context().locals.push(Local {
-            name: Token::new(TokenType::Identifier, name, 0),
+            name: Self::synthetic_token(name),
             depth: 0,
             captured: false,
         });
